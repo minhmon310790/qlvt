@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { supabase } from './supabaseClient'; // KẾT NỐI SUPABASE
 import { 
     Home, FileText, PieChart, Settings, Search, Bell, Menu, X, Plus, 
     MoreVertical, Eye, Edit, Trash2, FileDown, UploadCloud, CheckCircle2, 
@@ -18,7 +19,6 @@ const formatCurrency = (amount) => {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
 };
 
-// Khởi tạo tài khoản Admin mặc định
 const INITIAL_USERS = [
     { id: '1', username: 'admin', password: '123', fullName: 'Quản trị viên Hệ thống', role: 'admin' }
 ];
@@ -76,13 +76,13 @@ const calculateStatus = (contract) => {
 
 export default function ProcurementApp() {
     // Auth State
-    const [users, setUsers] = useState(INITIAL_USERS);
+    const [users, setUsers] = useState([]);
     const [currentUser, setCurrentUser] = useState(null);
     const [loginForm, setLoginForm] = useState({ username: '', password: '', error: '' });
 
     // App State
     const [contracts, setContracts] = useState([]);
-    const [view, setView] = useState('dashboard'); // 'dashboard', 'list', 'detail', 'users'
+    const [view, setView] = useState('dashboard');
     const [activeContractId, setActiveContractId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
@@ -97,9 +97,30 @@ export default function ProcurementApp() {
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [userForm, setUserForm] = useState(null);
 
+    // ==========================================
+    // TẢI DỮ LIỆU TỪ SUPABASE KHI MỞ WEB
+    // ==========================================
+    useEffect(() => {
+        const loadInitialData = async () => {
+            // 1. Tải danh sách người dùng
+            const { data: dbUsers } = await supabase.from('users').select('*');
+            if (dbUsers && dbUsers.length > 0) {
+                setUsers(dbUsers);
+            } else {
+                await supabase.from('users').insert(INITIAL_USERS);
+                setUsers(INITIAL_USERS);
+            }
+
+            // 2. Tải danh sách hợp đồng
+            const { data: dbContracts } = await supabase.from('contracts').select('*');
+            if (dbContracts) setContracts(dbContracts);
+        };
+        loadInitialData();
+    }, []);
+
+
     const activeContract = contracts.find(c => c.id === activeContractId);
     
-    // Authorization Check: Admin có toàn quyền, User chỉ thao tác trên HĐ do mình tạo
     const canEditContract = useMemo(() => {
         if (!currentUser || !activeContract) return false;
         return currentUser.role === 'admin' || activeContract.createdBy === currentUser.username;
@@ -146,6 +167,10 @@ export default function ProcurementApp() {
         setView('dashboard');
     };
 
+    // ==========================================
+    // CÁC HÀM XỬ LÝ LƯU TRỮ LÊN SUPABASE
+    // ==========================================
+
     const openContractModal = (contract = null) => {
         if (contract) {
             setContractForm(contract);
@@ -157,13 +182,18 @@ export default function ProcurementApp() {
                 signedAt: today, expiresAt: today, 
                 totalValue: '', inCharge: currentUser.fullName, notes: '',
                 imports: [], settlement: null,
-                createdBy: currentUser.username // Lưu người tạo
+                createdBy: currentUser.username
             });
         }
         setIsContractModalOpen(true);
     };
 
-    const saveContract = () => {
+    const saveContract = async () => {
+        // Đẩy lên mây
+        const { error } = await supabase.from('contracts').upsert(contractForm);
+        if (error) { alert('Lỗi: ' + error.message); return; }
+
+        // Cập nhật giao diện
         if (contracts.find(c => c.id === contractForm.id)) {
             setContracts(contracts.map(c => c.id === contractForm.id ? contractForm : c));
         } else {
@@ -172,9 +202,12 @@ export default function ProcurementApp() {
         setIsContractModalOpen(false);
     };
 
-    const deleteContract = (id) => {
-        setContracts(contracts.filter(c => c.id !== id));
-        if (activeContractId === id) setView('list');
+    const deleteContract = async (id) => {
+        const { error } = await supabase.from('contracts').delete().eq('id', id);
+        if (!error) {
+            setContracts(contracts.filter(c => c.id !== id));
+            if (activeContractId === id) setView('list');
+        }
     };
 
     const openImportModal = () => {
@@ -182,10 +215,15 @@ export default function ProcurementApp() {
         setIsImportModalOpen(true);
     };
 
-    const saveImport = () => {
-        const updatedContract = { ...activeContract, imports: [...(activeContract.imports || []), importForm] };
-        setContracts(contracts.map(c => c.id === activeContractId ? updatedContract : c));
-        setIsImportModalOpen(false);
+    const saveImport = async () => {
+        const updatedImports = [...(activeContract.imports || []), importForm];
+        const { error } = await supabase.from('contracts').update({ imports: updatedImports }).eq('id', activeContractId);
+        
+        if (!error) {
+            const updatedContract = { ...activeContract, imports: updatedImports };
+            setContracts(contracts.map(c => c.id === activeContractId ? updatedContract : c));
+            setIsImportModalOpen(false);
+        }
     };
 
     const openSettlementModal = () => {
@@ -193,13 +231,16 @@ export default function ProcurementApp() {
         setIsSettlementModalOpen(true);
     };
 
-    const saveSettlement = () => {
-        const updatedContract = { ...activeContract, settlement: settlementForm };
-        setContracts(contracts.map(c => c.id === activeContractId ? updatedContract : c));
-        setIsSettlementModalOpen(false);
+    const saveSettlement = async () => {
+        const { error } = await supabase.from('contracts').update({ settlement: settlementForm }).eq('id', activeContractId);
+        
+        if (!error) {
+            const updatedContract = { ...activeContract, settlement: settlementForm };
+            setContracts(contracts.map(c => c.id === activeContractId ? updatedContract : c));
+            setIsSettlementModalOpen(false);
+        }
     };
 
-    // User Management Handlers
     const openUserModal = (user = null) => {
         if (user) {
             setUserForm(user);
@@ -209,7 +250,10 @@ export default function ProcurementApp() {
         setIsUserModalOpen(true);
     };
 
-    const saveUser = () => {
+    const saveUser = async () => {
+        const { error } = await supabase.from('users').upsert(userForm);
+        if (error) { alert('Lỗi: ' + error.message); return; }
+
         if (users.find(u => u.id === userForm.id)) {
             setUsers(users.map(u => u.id === userForm.id ? userForm : u));
         } else {
@@ -218,10 +262,16 @@ export default function ProcurementApp() {
         setIsUserModalOpen(false);
     };
 
-    const deleteUser = (id) => {
-        setUsers(users.filter(u => u.id !== id));
+    const deleteUser = async (id) => {
+        const { error } = await supabase.from('users').delete().eq('id', id);
+        if (!error) {
+            setUsers(users.filter(u => u.id !== id));
+        }
     };
 
+    // ==========================================
+    // GIAO DIỆN HIỂN THỊ 
+    // ==========================================
 
     if (!currentUser) {
         return (
