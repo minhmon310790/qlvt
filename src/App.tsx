@@ -481,65 +481,81 @@ export default function ProcurementApp() {
                                 </div>
                                 <div className="overflow-auto flex-1">
                                     <table className="w-full text-[12px] text-left table-fixed">
-                                        <thead className="text-[11px] text-slate-400 uppercase bg-slate-900/80 sticky top-0 backdrop-blur-sm z-10">
-                                            <tr>
-                                                <th className="px-3 py-2.5 font-medium w-10">STT</th>
-                                                <th className="px-3 py-2.5 font-medium w-28">Số HĐ</th>
-                                                <th className="px-3 py-2.5 font-medium pr-4">Tên HĐ & Đối tác</th>
-                                                <th className="px-3 py-2.5 font-medium w-40">Tiến độ nhập</th>
-                                                <th className="px-3 py-2.5 font-medium w-40">Trạng thái</th>
-                                                <th className="px-3 py-2.5 font-medium text-center w-12">Thao tác</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-700/50">
-                                            {filteredContracts.map((contract, index) => {
-                                                const totalImport = contract.imports?.reduce((sum, imp) => sum + Number(imp.value), 0) || 0;
-                                                const remaining = Math.max(0, Number(contract.totalValue) - totalImport);
-                                                const status = calculateStatus(contract);
-                                                const percent = Number(contract.totalValue) > 0 ? Math.min(100, (totalImport / Number(contract.totalValue)) * 100) : 0;
-                                                
-                                                return (
-                                                    <tr key={contract.id} className="hover:bg-slate-700/30 transition-colors">
-                                                        <td className="px-3 py-2.5 text-slate-500 truncate">{index + 1}</td>
-                                                        <td className="px-3 py-2.5 font-mono text-blue-400 truncate" title={contract.code}>{contract.code}</td>
-                                                        <td className="px-3 py-2.5 pr-4 truncate">
-                                                            <div className="font-medium text-slate-200 truncate" title={contract.name}>{contract.name}</div>
-                                                            <div className="text-[11px] text-slate-500 mt-0.5 truncate" title={contract.partner}>{contract.partner}</div>
-                                                        </td>
-                                                        <td className="px-3 py-2.5">
-                                                            <div className="flex justify-between items-end text-[10px] mb-1">
-                                                                <span className="text-emerald-400 font-medium truncate" title={`Đã nhập: ${formatCurrency(totalImport)}`}>{formatCurrency(totalImport)}</span>
-                                                                <span className="text-slate-400 font-medium ml-2 truncate" title={`Tổng giá trị HĐ: ${formatCurrency(contract.totalValue)}`}>{formatCurrency(contract.totalValue)}</span>
-                                                            </div>
-                                                            <div className="w-full bg-slate-700/80 rounded-full h-1 overflow-hidden">
-                                                                <div className={`h-full rounded-full transition-all duration-500 ${percent >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
-                                                            </div>
-                                                            <div className="text-[10px] text-right text-orange-400/90 mt-1 truncate" title={`Còn lại: ${formatCurrency(remaining)}`}>
-                                                                Còn lại: {formatCurrency(remaining)}
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-3 py-2.5 truncate">
-                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${status.color}`}>
-                                                                {status.icon} {status.label}
-                                                            </span>
-                                                        </td>
-                                                        <td className="px-3 py-2.5 text-center">
-                                                            <button onClick={() => { setActiveContractId(contract.id); setView('detail'); }} className="text-slate-400 hover:text-blue-400 p-1.5 transition-colors bg-slate-900 rounded-lg border border-slate-700 hover:border-blue-500/30">
-                                                                <Eye size={14} />
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                            {filteredContracts.length === 0 && (
-                                                <tr>
-                                                    <td colSpan="10" className="px-3 py-10 text-center text-slate-500 text-sm">
-                                                        Không tìm thấy hợp đồng nào
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
+    <thead className="text-[11px] text-slate-400 uppercase bg-slate-900/80 sticky top-0 backdrop-blur-sm z-10">
+        <tr>
+            <th className="px-3 py-2.5 font-medium w-10">STT</th>
+            <th className="px-3 py-2.5 font-medium w-24">Số HĐ</th>
+            <th className="px-3 py-2.5 font-medium pr-4">Tên HĐ & Đối tác</th>
+            {/* 3 CỘT MỚI THÊM VÀO */}
+            <th className="px-3 py-2.5 font-medium w-24">Ngày ký</th>
+            <th className="px-3 py-2.5 font-medium w-24">Ngày hết hạn</th>
+            <th className="px-3 py-2.5 font-medium text-center w-24">Tổng đợt nhập</th>
+            {/* ================= */}
+            <th className="px-3 py-2.5 font-medium w-40">Tiến độ nhập</th>
+            <th className="px-3 py-2.5 font-medium w-36">Trạng thái</th>
+            <th className="px-3 py-2.5 font-medium text-center w-12">Thao tác</th>
+        </tr>
+    </thead>
+    <tbody className="divide-y divide-slate-700/50">
+        {filteredContracts.map((contract, index) => {
+            const totalImport = contract.imports?.reduce((sum, imp) => sum + Number(imp.value), 0) || 0;
+            const remaining = Math.max(0, Number(contract.totalValue) - totalImport);
+            const status = calculateStatus(contract);
+            const percent = Number(contract.totalValue) > 0 ? Math.min(100, (totalImport / Number(contract.totalValue)) * 100) : 0;
+            
+            return (
+                <tr key={contract.id} className="hover:bg-slate-700/30 transition-colors">
+                    <td className="px-3 py-2.5 text-slate-500 truncate">{index + 1}</td>
+                    <td className="px-3 py-2.5 font-mono text-blue-400 truncate" title={contract.code}>{contract.code}</td>
+                    <td className="px-3 py-2.5 pr-4 truncate">
+                        <div className="font-medium text-slate-200 truncate" title={contract.name}>{contract.name}</div>
+                        <div className="text-[11px] text-slate-500 mt-0.5 truncate" title={contract.partner}>{contract.partner}</div>
+                    </td>
+                    {/* 3 Ô DỮ LIỆU MỚI THÊM VÀO */}
+                    <td className="px-3 py-2.5 text-slate-300 truncate">
+                        {contract.signedAt ? new Date(contract.signedAt).toLocaleDateString('vi-VN') : '---'}
+                    </td>
+                    <td className="px-3 py-2.5 text-slate-300 truncate">
+                        {contract.expiresAt ? new Date(contract.expiresAt).toLocaleDateString('vi-VN') : '---'}
+                    </td>
+                    <td className="px-3 py-2.5 text-center font-medium text-slate-300">
+                        {contract.imports?.length || 0}
+                    </td>
+                    {/* ================= */}
+                    <td className="px-3 py-2.5">
+                        <div className="flex justify-between items-end text-[10px] mb-1">
+                            <span className="text-emerald-400 font-medium truncate" title={`Đã nhập: ${formatCurrency(totalImport)}`}>{formatCurrency(totalImport)}</span>
+                            <span className="text-slate-400 font-medium ml-2 truncate" title={`Tổng giá trị HĐ: ${formatCurrency(contract.totalValue)}`}>{formatCurrency(contract.totalValue)}</span>
+                        </div>
+                        <div className="w-full bg-slate-700/80 rounded-full h-1 overflow-hidden">
+                            <div className={`h-full rounded-full transition-all duration-500 ${percent >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+                        </div>
+                        <div className="text-[10px] text-right text-orange-400/90 mt-1 truncate" title={`Còn lại: ${formatCurrency(remaining)}`}>
+                            Còn lại: {formatCurrency(remaining)}
+                        </div>
+                    </td>
+                    <td className="px-3 py-2.5 truncate">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${status.color}`}>
+                            {status.icon} {status.label}
+                        </span>
+                    </td>
+                    <td className="px-3 py-2.5 text-center">
+                        <button onClick={() => { setActiveContractId(contract.id); setView('detail'); }} className="text-slate-400 hover:text-blue-400 p-1.5 transition-colors bg-slate-900 rounded-lg border border-slate-700 hover:border-blue-500/30">
+                            <Eye size={14} />
+                        </button>
+                    </td>
+                </tr>
+            );
+        })}
+        {filteredContracts.length === 0 && (
+            <tr>
+                <td colSpan="9" className="px-3 py-10 text-center text-slate-500 text-sm">
+                    Không tìm thấy hợp đồng nào
+                </td>
+            </tr>
+        )}
+    </tbody>
+</table>
                                 </div>
                             </div>
                         </div>
