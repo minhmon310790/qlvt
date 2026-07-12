@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { supabase } from './supabaseClient'; // KẾT NỐI SUPABASE
+import { supabase } from './supabaseClient'; 
 import { 
     Home, FileText, PieChart, Settings, Search, Bell, Menu, X, Plus, 
     MoreVertical, Eye, Edit, Trash2, FileDown, UploadCloud, CheckCircle2, 
@@ -15,7 +15,7 @@ const getToday = () => {
 };
 
 const formatCurrency = (amount) => {
-    if (!amount && amount !== 0) return '0 VNĐ';
+    if (!amount && amount !== 0) return '0 đ';
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
 };
 
@@ -86,6 +86,10 @@ export default function ProcurementApp() {
     const [activeContractId, setActiveContractId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
+    
+    // THÊM: STATE CHO BỘ LỌC NGÀY THÁNG
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
 
     // Modals
     const [isContractModalOpen, setIsContractModalOpen] = useState(false);
@@ -97,12 +101,9 @@ export default function ProcurementApp() {
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [userForm, setUserForm] = useState(null);
 
-    // ==========================================
-    // TẢI DỮ LIỆU TỪ SUPABASE KHI MỞ WEB
-    // ==========================================
+    // TẢI DỮ LIỆU
     useEffect(() => {
         const loadInitialData = async () => {
-            // 1. Tải danh sách người dùng
             const { data: dbUsers } = await supabase.from('users').select('*');
             if (dbUsers && dbUsers.length > 0) {
                 setUsers(dbUsers);
@@ -110,14 +111,11 @@ export default function ProcurementApp() {
                 await supabase.from('users').insert(INITIAL_USERS);
                 setUsers(INITIAL_USERS);
             }
-
-            // 2. Tải danh sách hợp đồng
             const { data: dbContracts } = await supabase.from('contracts').select('*');
             if (dbContracts) setContracts(dbContracts);
         };
         loadInitialData();
     }, []);
-
 
     const activeContract = contracts.find(c => c.id === activeContractId);
     
@@ -126,26 +124,65 @@ export default function ProcurementApp() {
         return currentUser.role === 'admin' || activeContract.createdBy === currentUser.username;
     }, [currentUser, activeContract]);
 
-    // TẠO BỘ LỌC QUYỀN: Ai tạo người nấy thấy, Admin thấy hết
+    // BỘ LỌC QUYỀN
     const visibleContracts = useMemo(() => {
         if (!currentUser) return [];
         if (currentUser.role === 'admin') return contracts;
         return contracts.filter(c => c.createdBy === currentUser.username);
     }, [contracts, currentUser]);
 
-    // DÙNG BỘ LỌC ĐÓ ĐỂ TÌM KIẾM
+    // BỘ LỌC TÌM KIẾM & NGÀY THÁNG
     const filteredContracts = useMemo(() => {
         return visibleContracts.filter(c => {
+            // Lọc theo chữ
             const matchSearch = c.code.toLowerCase().includes(searchTerm.toLowerCase()) || 
                                 c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                                 c.partner.toLowerCase().includes(searchTerm.toLowerCase());
+            
+            // Lọc theo trạng thái
             const status = calculateStatus(c);
             const matchStatus = filterStatus === 'all' || status.id === filterStatus;
-            return matchSearch && matchStatus;
-        });
-    }, [visibleContracts, searchTerm, filterStatus]);
+            
+            // THÊM: Lọc theo khoảng thời gian (Dựa trên Ngày Ký)
+            let matchDate = true;
+            if (startDate || endDate) {
+                const contractDate = new Date(c.signedAt);
+                contractDate.setHours(0,0,0,0);
+                
+                if (startDate) {
+                    const start = new Date(startDate);
+                    start.setHours(0,0,0,0);
+                    if (contractDate < start) matchDate = false;
+                }
+                if (endDate) {
+                    const end = new Date(endDate);
+                    end.setHours(23,59,59,999);
+                    if (contractDate > end) matchDate = false;
+                }
+            }
 
-    // THỐNG KÊ DASHBOARD CŨNG CHỈ TÍNH TOÁN TRÊN CÁC HỢP ĐỒNG ĐƯỢC PHÉP NHÌN THẤY
+            return matchSearch && matchStatus && matchDate;
+        });
+    }, [visibleContracts, searchTerm, filterStatus, startDate, endDate]);
+
+    // THÊM: TÍNH TOÁN DÒNG TỔNG CỘNG ĐỘNG
+    const totals = useMemo(() => {
+        let count = 0;
+        let importCount = 0;
+        let totalValue = 0;
+        let importedValue = 0;
+
+        filteredContracts.forEach(c => {
+            count++;
+            importCount += (c.imports?.length || 0);
+            totalValue += (Number(c.totalValue) || 0);
+            importedValue += (c.imports?.reduce((sum, imp) => sum + Number(imp.value), 0) || 0);
+        });
+
+        return { count, importCount, totalValue, importedValue };
+    }, [filteredContracts]);
+
+    // THỐNG KÊ DASHBOARD
     const stats = useMemo(() => {
         let progressing = 0, expiring = 0, settled = 0, overdue = 0, liquidate = 0;
         visibleContracts.forEach(c => {
@@ -176,10 +213,6 @@ export default function ProcurementApp() {
         setView('dashboard');
     };
 
-    // ==========================================
-    // CÁC HÀM XỬ LÝ LƯU TRỮ LÊN SUPABASE
-    // ==========================================
-
     const openContractModal = (contract = null) => {
         if (contract) {
             setContractForm(contract);
@@ -198,11 +231,9 @@ export default function ProcurementApp() {
     };
 
     const saveContract = async () => {
-        // Đẩy lên mây
         const { error } = await supabase.from('contracts').upsert(contractForm);
         if (error) { alert('Lỗi: ' + error.message); return; }
 
-        // Cập nhật giao diện
         if (contracts.find(c => c.id === contractForm.id)) {
             setContracts(contracts.map(c => c.id === contractForm.id ? contractForm : c));
         } else {
@@ -278,9 +309,9 @@ export default function ProcurementApp() {
         }
     };
 
-    // ==========================================
-    // GIAO DIỆN HIỂN THỊ 
-    // ==========================================
+    // =========================================================================
+    // RENDER UI
+    // =========================================================================
 
     if (!currentUser) {
         return (
@@ -330,9 +361,6 @@ export default function ProcurementApp() {
                             Đăng nhập
                         </button>
                     </form>
-                    <div className="mt-6 text-center text-xs text-slate-500">
-                        *Tài khoản mặc định: <b>admin</b> | Mật khẩu: <b>123</b>
-                    </div>
                 </div>
             </div>
         );
@@ -390,6 +418,7 @@ export default function ProcurementApp() {
                 </header>
 
                 <div className="flex-1 overflow-auto p-4 md:p-6">
+                    {/* VIEW: DASHBOARD */}
                     {view === 'dashboard' && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                             <div>
@@ -443,6 +472,7 @@ export default function ProcurementApp() {
                         </div>
                     )}
 
+                    {/* VIEW: DANH SÁCH HỢP ĐỒNG */}
                     {view === 'list' && (
                         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col">
                             <div className="flex items-center justify-between shrink-0">
@@ -455,17 +485,45 @@ export default function ProcurementApp() {
                             </div>
 
                             <div className="bg-slate-800 border border-slate-700 rounded-2xl flex flex-col overflow-hidden">
-                                <div className="p-3 border-b border-slate-700 flex gap-3 shrink-0">
-                                    <div className="relative flex-1">
-                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                                        <input 
-                                            type="text" 
-                                            placeholder="Tìm kiếm số HĐ, tên HĐ, đối tác..." 
-                                            value={searchTerm}
-                                            onChange={(e) => setSearchTerm(e.target.value)}
-                                            className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 transition-colors"
-                                        />
+                                {/* THANH CÔNG CỤ TÌM KIẾM & LỌC */}
+                                <div className="p-3 border-b border-slate-700 flex flex-wrap gap-3 shrink-0 items-center justify-between">
+                                    <div className="flex gap-3 flex-1 flex-wrap">
+                                        <div className="relative flex-1 min-w-[200px] max-w-sm">
+                                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                            <input 
+                                                type="text" 
+                                                placeholder="Tìm kiếm số HĐ, tên HĐ, đối tác..." 
+                                                value={searchTerm}
+                                                onChange={(e) => setSearchTerm(e.target.value)}
+                                                className="w-full bg-slate-900 border border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs focus:outline-none focus:border-blue-500 transition-colors"
+                                            />
+                                        </div>
+                                        
+                                        {/* GIAO DIỆN BỘ LỌC NGÀY THÁNG */}
+                                        <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 min-w-[280px]">
+                                            <Calendar className="text-slate-400" size={14}/>
+                                            <span className="text-slate-400 text-xs font-medium">Từ:</span>
+                                            <input 
+                                                type="date" 
+                                                value={startDate} 
+                                                onChange={e => setStartDate(e.target.value)} 
+                                                className="bg-transparent text-xs text-slate-200 focus:outline-none [color-scheme:dark] flex-1"
+                                            />
+                                            <span className="text-slate-400 text-xs font-medium border-l border-slate-700 pl-2">Đến:</span>
+                                            <input 
+                                                type="date" 
+                                                value={endDate} 
+                                                onChange={e => setEndDate(e.target.value)} 
+                                                className="bg-transparent text-xs text-slate-200 focus:outline-none [color-scheme:dark] flex-1"
+                                            />
+                                            {(startDate || endDate) && (
+                                                <button onClick={() => {setStartDate(''); setEndDate('');}} className="ml-1 text-slate-500 hover:text-red-400 transition-colors" title="Xóa bộ lọc ngày">
+                                                    <X size={14} />
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
+
                                     <select 
                                         value={filterStatus}
                                         onChange={(e) => setFilterStatus(e.target.value)}
@@ -479,88 +537,108 @@ export default function ProcurementApp() {
                                         <option value="settled">Đã quyết toán</option>
                                     </select>
                                 </div>
+
                                 <div className="overflow-auto flex-1">
                                     <table className="w-full text-[12px] text-left table-fixed">
-    <thead className="text-[11px] text-slate-400 uppercase bg-slate-900/80 sticky top-0 backdrop-blur-sm z-10">
-        <tr>
-            <th className="px-3 py-2.5 font-medium w-10">STT</th>
-            <th className="px-3 py-2.5 font-medium w-24">Số HĐ</th>
-            <th className="px-3 py-2.5 font-medium pr-4">Tên HĐ & Đối tác</th>
-            {/* 3 CỘT MỚI THÊM VÀO */}
-            <th className="px-3 py-2.5 font-medium w-24">Ngày ký</th>
-            <th className="px-3 py-2.5 font-medium w-24">Ngày hết hạn</th>
-            <th className="px-3 py-2.5 font-medium text-center w-24">Tổng đợt nhập</th>
-            {/* ================= */}
-            <th className="px-3 py-2.5 font-medium w-40">Tiến độ nhập</th>
-            <th className="px-3 py-2.5 font-medium w-36">Trạng thái</th>
-            <th className="px-3 py-2.5 font-medium text-center w-12">Thao tác</th>
-        </tr>
-    </thead>
-    <tbody className="divide-y divide-slate-700/50">
-        {filteredContracts.map((contract, index) => {
-            const totalImport = contract.imports?.reduce((sum, imp) => sum + Number(imp.value), 0) || 0;
-            const remaining = Math.max(0, Number(contract.totalValue) - totalImport);
-            const status = calculateStatus(contract);
-            const percent = Number(contract.totalValue) > 0 ? Math.min(100, (totalImport / Number(contract.totalValue)) * 100) : 0;
-            
-            return (
-                <tr key={contract.id} className="hover:bg-slate-700/30 transition-colors">
-                    <td className="px-3 py-2.5 text-slate-500 truncate">{index + 1}</td>
-                    <td className="px-3 py-2.5 font-mono text-blue-400 truncate" title={contract.code}>{contract.code}</td>
-                    <td className="px-3 py-2.5 pr-4 truncate">
-                        <div className="font-medium text-slate-200 truncate" title={contract.name}>{contract.name}</div>
-                        <div className="text-[11px] text-slate-500 mt-0.5 truncate" title={contract.partner}>{contract.partner}</div>
-                    </td>
-                    {/* 3 Ô DỮ LIỆU MỚI THÊM VÀO */}
-                    <td className="px-3 py-2.5 text-slate-300 truncate">
-                        {contract.signedAt ? new Date(contract.signedAt).toLocaleDateString('vi-VN') : '---'}
-                    </td>
-                    <td className="px-3 py-2.5 text-slate-300 truncate">
-                        {contract.expiresAt ? new Date(contract.expiresAt).toLocaleDateString('vi-VN') : '---'}
-                    </td>
-                    <td className="px-3 py-2.5 text-center font-medium text-slate-300">
-                        {contract.imports?.length || 0}
-                    </td>
-                    {/* ================= */}
-                    <td className="px-3 py-2.5">
-                        <div className="flex justify-between items-end text-[10px] mb-1">
-                            <span className="text-emerald-400 font-medium truncate" title={`Đã nhập: ${formatCurrency(totalImport)}`}>{formatCurrency(totalImport)}</span>
-                            <span className="text-slate-400 font-medium ml-2 truncate" title={`Tổng giá trị HĐ: ${formatCurrency(contract.totalValue)}`}>{formatCurrency(contract.totalValue)}</span>
-                        </div>
-                        <div className="w-full bg-slate-700/80 rounded-full h-1 overflow-hidden">
-                            <div className={`h-full rounded-full transition-all duration-500 ${percent >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
-                        </div>
-                        <div className="text-[10px] text-right text-orange-400/90 mt-1 truncate" title={`Còn lại: ${formatCurrency(remaining)}`}>
-                            Còn lại: {formatCurrency(remaining)}
-                        </div>
-                    </td>
-                    <td className="px-3 py-2.5 truncate">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${status.color}`}>
-                            {status.icon} {status.label}
-                        </span>
-                    </td>
-                    <td className="px-3 py-2.5 text-center">
-                        <button onClick={() => { setActiveContractId(contract.id); setView('detail'); }} className="text-slate-400 hover:text-blue-400 p-1.5 transition-colors bg-slate-900 rounded-lg border border-slate-700 hover:border-blue-500/30">
-                            <Eye size={14} />
-                        </button>
-                    </td>
-                </tr>
-            );
-        })}
-        {filteredContracts.length === 0 && (
-            <tr>
-                <td colSpan="9" className="px-3 py-10 text-center text-slate-500 text-sm">
-                    Không tìm thấy hợp đồng nào
-                </td>
-            </tr>
-        )}
-    </tbody>
-</table>
+                                        <thead className="text-[11px] text-slate-400 uppercase bg-slate-900/80 sticky top-0 backdrop-blur-sm z-10">
+                                            <tr>
+                                                <th className="px-3 py-2.5 font-medium w-10">STT</th>
+                                                <th className="px-3 py-2.5 font-medium w-24">Số HĐ</th>
+                                                <th className="px-3 py-2.5 font-medium pr-4">Tên HĐ & Đối tác</th>
+                                                <th className="px-3 py-2.5 font-medium w-24">Ngày ký</th>
+                                                <th className="px-3 py-2.5 font-medium w-24">Ngày hết hạn</th>
+                                                <th className="px-3 py-2.5 font-medium text-center w-24">Tổng đợt nhập</th>
+                                                <th className="px-3 py-2.5 font-medium w-44">Tiến độ nhập</th>
+                                                <th className="px-3 py-2.5 font-medium w-36">Trạng thái</th>
+                                                <th className="px-3 py-2.5 font-medium text-center w-12">Thao tác</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-700/50">
+                                            {/* DÒNG TỔNG CỘNG */}
+                                            {filteredContracts.length > 0 && (
+                                                <tr className="bg-blue-600/15 border-b-2 border-blue-500/30">
+                                                    <td className="px-3 py-3 font-bold text-blue-400 text-center" colSpan="3">
+                                                        TỔNG CỘNG KẾT QUẢ TÌM KIẾM ({totals.count} HĐ)
+                                                    </td>
+                                                    <td className="px-3 py-3 text-slate-500 text-center">---</td>
+                                                    <td className="px-3 py-3 text-slate-500 text-center">---</td>
+                                                    <td className="px-3 py-3 font-bold text-blue-400 text-center text-sm">
+                                                        {totals.importCount}
+                                                    </td>
+                                                    <td className="px-3 py-3">
+                                                        <div className="flex justify-between items-end text-xs">
+                                                            <span className="text-emerald-400 font-bold" title="Tổng tiền đã nhập">{formatCurrency(totals.importedValue)}</span>
+                                                            <span className="text-blue-400 font-bold ml-2" title="Tổng giá trị các HĐ">{formatCurrency(totals.totalValue)}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-3 py-3 text-slate-500 text-center" colSpan="2">---</td>
+                                                </tr>
+                                            )}
+
+                                            {/* RENDER CÁC DÒNG HỢP ĐỒNG */}
+                                            {filteredContracts.map((contract, index) => {
+                                                const totalImport = contract.imports?.reduce((sum, imp) => sum + Number(imp.value), 0) || 0;
+                                                const remaining = Math.max(0, Number(contract.totalValue) - totalImport);
+                                                const status = calculateStatus(contract);
+                                                const percent = Number(contract.totalValue) > 0 ? Math.min(100, (totalImport / Number(contract.totalValue)) * 100) : 0;
+                                                
+                                                return (
+                                                    <tr key={contract.id} className="hover:bg-slate-700/30 transition-colors">
+                                                        <td className="px-3 py-2.5 text-slate-500 truncate">{index + 1}</td>
+                                                        <td className="px-3 py-2.5 font-mono text-blue-400 truncate" title={contract.code}>{contract.code}</td>
+                                                        <td className="px-3 py-2.5 pr-4 truncate">
+                                                            <div className="font-medium text-slate-200 truncate" title={contract.name}>{contract.name}</div>
+                                                            <div className="text-[11px] text-slate-500 mt-0.5 truncate" title={contract.partner}>{contract.partner}</div>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-slate-300 truncate">
+                                                            {contract.signedAt ? new Date(contract.signedAt).toLocaleDateString('vi-VN') : '---'}
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-slate-300 truncate">
+                                                            {contract.expiresAt ? new Date(contract.expiresAt).toLocaleDateString('vi-VN') : '---'}
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center font-medium text-slate-300">
+                                                            {contract.imports?.length || 0}
+                                                        </td>
+                                                        <td className="px-3 py-2.5">
+                                                            <div className="flex justify-between items-end text-[10px] mb-1">
+                                                                <span className="text-emerald-400 font-medium truncate" title={`Đã nhập: ${formatCurrency(totalImport)}`}>{formatCurrency(totalImport)}</span>
+                                                                <span className="text-slate-400 font-medium ml-2 truncate" title={`Tổng giá trị HĐ: ${formatCurrency(contract.totalValue)}`}>{formatCurrency(contract.totalValue)}</span>
+                                                            </div>
+                                                            <div className="w-full bg-slate-700/80 rounded-full h-1 overflow-hidden">
+                                                                <div className={`h-full rounded-full transition-all duration-500 ${percent >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+                                                            </div>
+                                                            <div className="text-[10px] text-right text-orange-400/90 mt-1 truncate" title={`Còn lại: ${formatCurrency(remaining)}`}>
+                                                                Còn lại: {formatCurrency(remaining)}
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 truncate">
+                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border ${status.color}`}>
+                                                                {status.icon} {status.label}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center">
+                                                            <button onClick={() => { setActiveContractId(contract.id); setView('detail'); }} className="text-slate-400 hover:text-blue-400 p-1.5 transition-colors bg-slate-900 rounded-lg border border-slate-700 hover:border-blue-500/30">
+                                                                <Eye size={14} />
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            {filteredContracts.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="9" className="px-3 py-10 text-center text-slate-500 text-sm">
+                                                        Không tìm thấy hợp đồng nào
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         </div>
                     )}
 
+                    {/* VIEW: CHI TIẾT HỢP ĐỒNG */}
                     {view === 'detail' && activeContract && (
                         <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-500">
                             <div className="flex items-center justify-between">
@@ -595,7 +673,6 @@ export default function ProcurementApp() {
 
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
                                 <div className="lg:col-span-2 space-y-5">
-                                    {/* Imports Section */}
                                     <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5">
                                         <div className="flex items-center justify-between mb-4">
                                             <h3 className="text-base font-semibold">Lịch sử đợt nhập</h3>
@@ -630,7 +707,6 @@ export default function ProcurementApp() {
                                         </table>
                                     </div>
 
-                                    {/* Settlement Section */}
                                     <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5">
                                         <div className="flex items-center justify-between mb-4">
                                             <h3 className="text-base font-semibold flex items-center gap-2"><CheckSquare size={16} className="text-purple-500" /> Hồ sơ quyết toán</h3>
@@ -655,7 +731,6 @@ export default function ProcurementApp() {
                                     </div>
                                 </div>
 
-                                {/* Summary Sidebar */}
                                 <div className="space-y-5">
                                     <div className="bg-slate-800 border border-slate-700 rounded-2xl p-5">
                                         <h3 className="text-base font-semibold mb-4">Tổng hợp tài chính</h3>
@@ -710,6 +785,7 @@ export default function ProcurementApp() {
                         </div>
                     )}
 
+                    {/* VIEW: QUẢN LÝ TÀI KHOẢN */}
                     {view === 'users' && currentUser.role === 'admin' && (
                         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                             <div className="flex items-center justify-between">
@@ -770,7 +846,7 @@ export default function ProcurementApp() {
                 </div>
             </main>
 
-            {/* CONTRACT MODAL */}
+            {/* CÁC MODALS GIỮ NGUYÊN BÊN DƯỚI */}
             {isContractModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
@@ -822,7 +898,6 @@ export default function ProcurementApp() {
                 </div>
             )}
 
-            {/* IMPORT MODAL */}
             {isImportModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
@@ -861,7 +936,6 @@ export default function ProcurementApp() {
                 </div>
             )}
 
-            {/* SETTLEMENT MODAL */}
             {isSettlementModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
@@ -888,7 +962,6 @@ export default function ProcurementApp() {
                 </div>
             )}
 
-            {/* USER MODAL */}
             {isUserModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
