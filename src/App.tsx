@@ -126,8 +126,16 @@ export default function ProcurementApp() {
         return currentUser.role === 'admin' || activeContract.createdBy === currentUser.username;
     }, [currentUser, activeContract]);
 
+    // TẠO BỘ LỌC QUYỀN: Ai tạo người nấy thấy, Admin thấy hết
+    const visibleContracts = useMemo(() => {
+        if (!currentUser) return [];
+        if (currentUser.role === 'admin') return contracts;
+        return contracts.filter(c => c.createdBy === currentUser.username);
+    }, [contracts, currentUser]);
+
+    // DÙNG BỘ LỌC ĐÓ ĐỂ TÌM KIẾM
     const filteredContracts = useMemo(() => {
-        return contracts.filter(c => {
+        return visibleContracts.filter(c => {
             const matchSearch = c.code.toLowerCase().includes(searchTerm.toLowerCase()) || 
                                 c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                                 c.partner.toLowerCase().includes(searchTerm.toLowerCase());
@@ -135,11 +143,12 @@ export default function ProcurementApp() {
             const matchStatus = filterStatus === 'all' || status.id === filterStatus;
             return matchSearch && matchStatus;
         });
-    }, [contracts, searchTerm, filterStatus]);
+    }, [visibleContracts, searchTerm, filterStatus]);
 
+    // THỐNG KÊ DASHBOARD CŨNG CHỈ TÍNH TOÁN TRÊN CÁC HỢP ĐỒNG ĐƯỢC PHÉP NHÌN THẤY
     const stats = useMemo(() => {
         let progressing = 0, expiring = 0, settled = 0, overdue = 0, liquidate = 0;
-        contracts.forEach(c => {
+        visibleContracts.forEach(c => {
             const status = calculateStatus(c).id;
             if (status === 'progressing') progressing++;
             if (status === 'expiring') expiring++;
@@ -147,8 +156,8 @@ export default function ProcurementApp() {
             if (status === 'overdue') overdue++;
             if (status === 'liquidate') liquidate++;
         });
-        return { total: contracts.length, progressing, expiring, settled, overdue, liquidate };
-    }, [contracts]);
+        return { total: visibleContracts.length, progressing, expiring, settled, overdue, liquidate };
+    }, [visibleContracts]);
 
     const handleLogin = (e) => {
         e.preventDefault();
