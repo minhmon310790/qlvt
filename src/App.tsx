@@ -4,7 +4,7 @@ import {
     Home, FileText, PieChart, Settings, Search, Bell, Menu, X, Plus, 
     MoreVertical, Eye, Edit, Trash2, FileDown, UploadCloud, CheckCircle2, 
     AlertCircle, Clock, CheckSquare, ChevronLeft, Calendar, User, FileDigit,
-    ArrowDownToLine, ArrowUpRight, LogOut, Users, Shield, Lock, Key
+    ArrowDownToLine, ArrowUpRight, LogOut, Users, Shield, Lock, Key, Package
 } from 'lucide-react';
 
 const getToday = () => {
@@ -12,13 +12,6 @@ const getToday = () => {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}-${month}-${day}`;
-};
-
-// HÀM MỚI: Lấy ngày mùng 1 của tháng hiện tại
-const getFirstDayOfMonth = () => {
-    const d = new Date();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    return `${d.getFullYear()}-${month}-01`;
 };
 
 const formatDisplayDate = (dateString) => {
@@ -103,9 +96,13 @@ export default function ProcurementApp() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
     
-    // CẬP NHẬT: MẶC ĐỊNH LÀ TỪ MÙNG 1 ĐẦU THÁNG ĐẾN HÔM NAY
-    const [startDate, setStartDate] = useState(getFirstDayOfMonth());
-    const [endDate, setEndDate] = useState(getToday());
+    // STATE CHO BỘ LỌC NGÀY THÁNG (HỢP ĐỒNG)
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+
+    // THÊM MỚI: STATE CHO BỘ LỌC NGÀY THÁNG (ĐỢT NHẬP)
+    const [importStartDate, setImportStartDate] = useState('');
+    const [importEndDate, setImportEndDate] = useState('');
 
     // Modals
     const [isContractModalOpen, setIsContractModalOpen] = useState(false);
@@ -147,19 +144,16 @@ export default function ProcurementApp() {
         return contracts.filter(c => c.createdBy === currentUser.username);
     }, [contracts, currentUser]);
 
-    // BỘ LỌC TÌM KIẾM & NGÀY THÁNG
+    // BỘ LỌC TÌM KIẾM & NGÀY THÁNG (CHO HỢP ĐỒNG)
     const filteredContracts = useMemo(() => {
         return visibleContracts.filter(c => {
-            // Lọc theo chữ
             const matchSearch = c.code.toLowerCase().includes(searchTerm.toLowerCase()) || 
                                 c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                                 c.partner.toLowerCase().includes(searchTerm.toLowerCase());
             
-            // Lọc theo trạng thái
             const status = calculateStatus(c);
             const matchStatus = filterStatus === 'all' || status.id === filterStatus;
             
-            // Lọc theo khoảng thời gian (Dựa trên Ngày Ký)
             let matchDate = true;
             if (startDate || endDate) {
                 const contractDate = new Date(c.signedAt);
@@ -181,7 +175,7 @@ export default function ProcurementApp() {
         });
     }, [visibleContracts, searchTerm, filterStatus, startDate, endDate]);
 
-    // TÍNH TOÁN DÒNG TỔNG CỘNG ĐỘNG
+    // TÍNH TOÁN DÒNG TỔNG CỘNG ĐỘNG (CHO HỢP ĐỒNG)
     const totals = useMemo(() => {
         let count = 0;
         let importCount = 0;
@@ -198,10 +192,13 @@ export default function ProcurementApp() {
         return { count, importCount, totalValue, importedValue };
     }, [filteredContracts]);
 
-    // THỐNG KÊ DASHBOARD
+    // THỐNG KÊ DASHBOARD (THÊM TỔNG SỐ ĐỢT NHẬP)
     const stats = useMemo(() => {
         let progressing = 0, expiring = 0, settled = 0, overdue = 0, liquidate = 0;
+        let totalImportsCount = 0; // Thêm biến đếm tổng đợt nhập
+        
         visibleContracts.forEach(c => {
+            totalImportsCount += (c.imports?.length || 0);
             const status = calculateStatus(c).id;
             if (status === 'progressing') progressing++;
             if (status === 'expiring') expiring++;
@@ -209,8 +206,57 @@ export default function ProcurementApp() {
             if (status === 'overdue') overdue++;
             if (status === 'liquidate') liquidate++;
         });
-        return { total: visibleContracts.length, progressing, expiring, settled, overdue, liquidate };
+        return { total: visibleContracts.length, progressing, expiring, settled, overdue, liquidate, totalImportsCount };
     }, [visibleContracts]);
+
+    // THÊM MỚI: TẠO DANH SÁCH ĐỢT NHẬP (LẤY TỪ TẤT CẢ HỢP ĐỒNG & LỌC THEO NGÀY)
+    const filteredImports = useMemo(() => {
+        let allImports = [];
+        // Gộp tất cả các đợt nhập vào 1 mảng chung
+        visibleContracts.forEach(contract => {
+            if (contract.imports && contract.imports.length > 0) {
+                contract.imports.forEach(imp => {
+                    allImports.push({
+                        ...imp,
+                        contractId: contract.id,
+                        contractCode: contract.code,
+                        contractName: contract.name
+                    });
+                });
+            }
+        });
+
+        // Lọc theo ngày tháng (nếu có chọn)
+        if (importStartDate || importEndDate) {
+            allImports = allImports.filter(imp => {
+                const d = new Date(imp.date);
+                d.setHours(0,0,0,0);
+                let match = true;
+                if (importStartDate) {
+                    const start = new Date(importStartDate);
+                    start.setHours(0,0,0,0);
+                    if (d < start) match = false;
+                }
+                if (importEndDate) {
+                    const end = new Date(importEndDate);
+                    end.setHours(23,59,59,999);
+                    if (d > end) match = false;
+                }
+                return match;
+            });
+        }
+
+        // Sắp xếp ngày mới nhất lên trên
+        return allImports.sort((a, b) => new Date(b.date) - new Date(a.date));
+    }, [visibleContracts, importStartDate, importEndDate]);
+
+    // TÍNH TOÁN TỔNG CỘNG CHO DANH SÁCH ĐỢT NHẬP
+    const importsTotals = useMemo(() => {
+        const count = filteredImports.length;
+        const totalValue = filteredImports.reduce((sum, imp) => sum + Number(imp.value), 0);
+        return { count, totalValue };
+    }, [filteredImports]);
+
 
     const handleLogin = (e) => {
         e.preventDefault();
@@ -441,7 +487,8 @@ export default function ProcurementApp() {
                                 <h2 className="text-2xl font-bold mb-1">Tổng quan</h2>
                                 <p className="text-slate-400 text-sm">Báo cáo tình trạng hợp đồng thời gian thực</p>
                             </div>
-                            <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3 md:gap-4">
+                            {/* Đổi grid layout để vừa 7 thẻ */}
+                            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
                                 <div onClick={() => { setFilterStatus('all'); setView('list'); }} className="bg-slate-800 border border-slate-700 rounded-xl p-4 cursor-pointer hover:bg-slate-750 transition-all hover:-translate-y-1 flex items-center justify-between gap-2">
                                     <div>
                                         <p className="text-slate-400 text-xs mb-0.5 line-clamp-1">Tổng số hợp đồng</p>
@@ -449,6 +496,16 @@ export default function ProcurementApp() {
                                     </div>
                                     <div className="w-9 h-9 bg-blue-500/20 rounded-lg flex items-center justify-center shrink-0 text-blue-500"><FileDigit size={18} /></div>
                                 </div>
+
+                                {/* THẺ MỚI: TỔNG ĐỢT NHẬP */}
+                                <div onClick={() => { setView('imports_report'); }} className="bg-slate-800 border border-slate-700 rounded-xl p-4 cursor-pointer hover:bg-slate-750 transition-all hover:-translate-y-1 flex items-center justify-between gap-2">
+                                    <div>
+                                        <p className="text-slate-400 text-xs mb-0.5 line-clamp-1">Tổng đợt nhập</p>
+                                        <h3 className="text-xl font-bold text-slate-100">{stats.totalImportsCount}</h3>
+                                    </div>
+                                    <div className="w-9 h-9 bg-indigo-500/20 rounded-lg flex items-center justify-center shrink-0 text-indigo-400"><Package size={18} /></div>
+                                </div>
+
                                 <div onClick={() => { setFilterStatus('progressing'); setView('list'); }} className="bg-slate-800 border border-slate-700 rounded-xl p-4 cursor-pointer hover:bg-slate-750 transition-all hover:-translate-y-1 flex items-center justify-between gap-2">
                                     <div>
                                         <p className="text-slate-400 text-xs mb-0.5 line-clamp-1">Đang thực hiện</p>
@@ -483,6 +540,108 @@ export default function ProcurementApp() {
                                         <h3 className="text-xl font-bold text-slate-100">{stats.settled}</h3>
                                     </div>
                                     <div className="w-9 h-9 bg-purple-500/20 rounded-lg flex items-center justify-center shrink-0 text-purple-500"><CheckCircle2 size={18} /></div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* VIEW: MÀN HÌNH MỚI - BÁO CÁO TỔNG ĐỢT NHẬP */}
+                    {view === 'imports_report' && (
+                        <div className="space-y-4 animate-in fade-in slide-in-from-right-8 duration-500 h-full flex flex-col">
+                            <div className="flex items-center justify-between shrink-0">
+                                <div className="flex items-center gap-4">
+                                    <button onClick={() => setView('dashboard')} className="w-9 h-9 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors">
+                                        <ChevronLeft size={18} />
+                                    </button>
+                                    <div>
+                                        <h2 className="text-2xl font-bold mb-1">Báo cáo chi tiết đợt nhập</h2>
+                                        <p className="text-slate-400 text-sm">Tổng hợp toàn bộ lịch sử nhập vật tư của các hợp đồng</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-800 border border-slate-700 rounded-2xl flex flex-col overflow-hidden flex-1">
+                                {/* THANH CÔNG CỤ BỘ LỌC NGÀY THÁNG */}
+                                <div className="p-3 border-b border-slate-700 flex flex-wrap gap-3 shrink-0 items-center justify-between bg-slate-800/80">
+                                    <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 min-w-[280px]">
+                                        <Calendar className="text-slate-400" size={14}/>
+                                        <span className="text-slate-400 text-xs font-medium">Từ:</span>
+                                        <input 
+                                            type="date" 
+                                            value={importStartDate} 
+                                            onChange={e => setImportStartDate(e.target.value)} 
+                                            className="bg-transparent text-xs text-slate-200 focus:outline-none [color-scheme:dark] flex-1"
+                                        />
+                                        <span className="text-slate-400 text-xs font-medium border-l border-slate-700 pl-2">Đến:</span>
+                                        <input 
+                                            type="date" 
+                                            value={importEndDate} 
+                                            onChange={e => setImportEndDate(e.target.value)} 
+                                            className="bg-transparent text-xs text-slate-200 focus:outline-none [color-scheme:dark] flex-1"
+                                        />
+                                        {(importStartDate || importEndDate) && (
+                                            <button onClick={() => {setImportStartDate(''); setImportEndDate('');}} className="ml-1 text-slate-500 hover:text-red-400 transition-colors" title="Xóa bộ lọc ngày">
+                                                <X size={14} />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="overflow-auto flex-1">
+                                    <table className="w-full text-[12px] text-left table-fixed">
+                                        <thead className="text-[11px] text-slate-400 uppercase bg-slate-900/80 sticky top-0 backdrop-blur-sm z-10">
+                                            <tr>
+                                                <th className="px-4 py-3 font-medium w-12">STT</th>
+                                                <th className="px-4 py-3 font-medium w-32">Ngày nhập</th>
+                                                <th className="px-4 py-3 font-medium w-32">Số hóa đơn</th>
+                                                <th className="px-4 py-3 font-medium">Thuộc Hợp đồng</th>
+                                                <th className="px-4 py-3 font-medium text-right w-44">Giá trị đợt nhập</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-700/50">
+                                            {/* DÒNG TỔNG CỘNG CHO ĐỢT NHẬP */}
+                                            {filteredImports.length > 0 && (
+                                                <tr className="bg-indigo-600/15 border-b-2 border-indigo-500/30">
+                                                    <td className="px-4 py-3 font-bold text-indigo-400 text-center" colSpan="4">
+                                                        TỔNG CỘNG ({importsTotals.count} Đợt nhập)
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right font-bold text-emerald-400 text-[13px]">
+                                                        {formatCurrency(importsTotals.totalValue)}
+                                                    </td>
+                                                </tr>
+                                            )}
+
+                                            {/* DANH SÁCH CHI TIẾT */}
+                                            {filteredImports.map((imp, index) => (
+                                                <tr key={index} className="hover:bg-slate-700/30 transition-colors">
+                                                    <td className="px-4 py-3 text-slate-500">{index + 1}</td>
+                                                    <td className="px-4 py-3 text-slate-300 font-medium">{formatDisplayDate(imp.date)}</td>
+                                                    <td className="px-4 py-3 font-mono text-slate-400">{imp.invoiceNum || '---'}</td>
+                                                    <td className="px-4 py-3 truncate">
+                                                        <span 
+                                                            className="text-blue-400 hover:text-blue-300 cursor-pointer font-medium hover:underline"
+                                                            onClick={() => { setActiveContractId(imp.contractId); setView('detail'); }}
+                                                            title="Bấm để xem chi tiết Hợp đồng"
+                                                        >
+                                                            {imp.contractCode}
+                                                        </span>
+                                                        <span className="text-slate-500 ml-2 truncate">- {imp.contractName}</span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right font-medium text-emerald-400">
+                                                        {formatCurrency(imp.value)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+
+                                            {filteredImports.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="5" className="px-4 py-10 text-center text-slate-500 text-sm">
+                                                        Không tìm thấy đợt nhập nào trong khoảng thời gian này
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         </div>
