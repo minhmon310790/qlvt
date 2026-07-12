@@ -96,11 +96,9 @@ export default function ProcurementApp() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
     
-    // STATE CHO BỘ LỌC NGÀY THÁNG (HỢP ĐỒNG)
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
 
-    // THÊM MỚI: STATE CHO BỘ LỌC NGÀY THÁNG (ĐỢT NHẬP)
     const [importStartDate, setImportStartDate] = useState('');
     const [importEndDate, setImportEndDate] = useState('');
 
@@ -113,6 +111,10 @@ export default function ProcurementApp() {
     const [settlementForm, setSettlementForm] = useState(null);
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [userForm, setUserForm] = useState(null);
+
+    // THÊM: STATE CHO MODAL ĐỔI MẬT KHẨU
+    const [isChangePwdModalOpen, setIsChangePwdModalOpen] = useState(false);
+    const [changePwdForm, setChangePwdForm] = useState({ oldPwd: '', newPwd: '', confirmPwd: '', error: '', success: '' });
 
     // TẢI DỮ LIỆU
     useEffect(() => {
@@ -137,14 +139,12 @@ export default function ProcurementApp() {
         return currentUser.role === 'admin' || activeContract.createdBy === currentUser.username;
     }, [currentUser, activeContract]);
 
-    // BỘ LỌC QUYỀN
     const visibleContracts = useMemo(() => {
         if (!currentUser) return [];
         if (currentUser.role === 'admin') return contracts;
         return contracts.filter(c => c.createdBy === currentUser.username);
     }, [contracts, currentUser]);
 
-    // BỘ LỌC TÌM KIẾM & NGÀY THÁNG (CHO HỢP ĐỒNG)
     const filteredContracts = useMemo(() => {
         return visibleContracts.filter(c => {
             const matchSearch = c.code.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -175,7 +175,6 @@ export default function ProcurementApp() {
         });
     }, [visibleContracts, searchTerm, filterStatus, startDate, endDate]);
 
-    // TÍNH TOÁN DÒNG TỔNG CỘNG ĐỘNG (CHO HỢP ĐỒNG)
     const totals = useMemo(() => {
         let count = 0;
         let importCount = 0;
@@ -192,10 +191,9 @@ export default function ProcurementApp() {
         return { count, importCount, totalValue, importedValue };
     }, [filteredContracts]);
 
-    // THỐNG KÊ DASHBOARD (THÊM TỔNG SỐ ĐỢT NHẬP)
     const stats = useMemo(() => {
         let progressing = 0, expiring = 0, settled = 0, overdue = 0, liquidate = 0;
-        let totalImportsCount = 0; // Thêm biến đếm tổng đợt nhập
+        let totalImportsCount = 0; 
         
         visibleContracts.forEach(c => {
             totalImportsCount += (c.imports?.length || 0);
@@ -209,10 +207,8 @@ export default function ProcurementApp() {
         return { total: visibleContracts.length, progressing, expiring, settled, overdue, liquidate, totalImportsCount };
     }, [visibleContracts]);
 
-    // THÊM MỚI: TẠO DANH SÁCH ĐỢT NHẬP (LẤY TỪ TẤT CẢ HỢP ĐỒNG & LỌC THEO NGÀY)
     const filteredImports = useMemo(() => {
         let allImports = [];
-        // Gộp tất cả các đợt nhập vào 1 mảng chung
         visibleContracts.forEach(contract => {
             if (contract.imports && contract.imports.length > 0) {
                 contract.imports.forEach(imp => {
@@ -226,7 +222,6 @@ export default function ProcurementApp() {
             }
         });
 
-        // Lọc theo ngày tháng (nếu có chọn)
         if (importStartDate || importEndDate) {
             allImports = allImports.filter(imp => {
                 const d = new Date(imp.date);
@@ -246,17 +241,14 @@ export default function ProcurementApp() {
             });
         }
 
-        // Sắp xếp ngày mới nhất lên trên
         return allImports.sort((a, b) => new Date(b.date) - new Date(a.date));
     }, [visibleContracts, importStartDate, importEndDate]);
 
-    // TÍNH TOÁN TỔNG CỘNG CHO DANH SÁCH ĐỢT NHẬP
     const importsTotals = useMemo(() => {
         const count = filteredImports.length;
         const totalValue = filteredImports.reduce((sum, imp) => sum + Number(imp.value), 0);
         return { count, totalValue };
     }, [filteredImports]);
-
 
     const handleLogin = (e) => {
         e.preventDefault();
@@ -273,6 +265,38 @@ export default function ProcurementApp() {
     const handleLogout = () => {
         setCurrentUser(null);
         setView('dashboard');
+    };
+
+    // THÊM: HÀM LƯU MẬT KHẨU MỚI
+    const handleSavePassword = async () => {
+        if (changePwdForm.oldPwd !== currentUser.password) {
+            setChangePwdForm(prev => ({...prev, error: 'Mật khẩu hiện tại không đúng!', success: ''}));
+            return;
+        }
+        if (changePwdForm.newPwd !== changePwdForm.confirmPwd) {
+            setChangePwdForm(prev => ({...prev, error: 'Mật khẩu mới không khớp!', success: ''}));
+            return;
+        }
+        if (changePwdForm.newPwd.trim() === '') {
+            setChangePwdForm(prev => ({...prev, error: 'Mật khẩu không được để trống!', success: ''}));
+            return;
+        }
+
+        const { error } = await supabase.from('users').update({ password: changePwdForm.newPwd }).eq('id', currentUser.id);
+        
+        if (!error) {
+            const updatedUser = { ...currentUser, password: changePwdForm.newPwd };
+            setCurrentUser(updatedUser);
+            setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
+            setChangePwdForm(prev => ({...prev, error: '', success: 'Đổi mật khẩu thành công!'}));
+            // Tự động đóng modal sau 1.5 giây
+            setTimeout(() => {
+                setIsChangePwdModalOpen(false);
+                setChangePwdForm({ oldPwd: '', newPwd: '', confirmPwd: '', error: '', success: '' });
+            }, 1500);
+        } else {
+            setChangePwdForm(prev => ({...prev, error: 'Lỗi hệ thống: ' + error.message, success: ''}));
+        }
     };
 
     const openContractModal = (contract = null) => {
@@ -455,11 +479,18 @@ export default function ProcurementApp() {
                         </>
                     )}
                 </nav>
-                <div className="p-3 border-t border-slate-800">
+                <div className="p-3 border-t border-slate-800 space-y-1.5">
                     <div className="px-3 py-2 text-xs text-slate-400 mb-2 truncate">
                         Đang đăng nhập:<br/><b className="text-slate-200 text-sm">{currentUser.fullName}</b>
                     </div>
-                    <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm text-red-400 hover:bg-red-500/10 font-medium">
+                    {/* THÊM NÚT ĐỔI MẬT KHẨU */}
+                    <button onClick={() => {
+                        setChangePwdForm({ oldPwd: '', newPwd: '', confirmPwd: '', error: '', success: '' });
+                        setIsChangePwdModalOpen(true);
+                    }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm text-slate-300 hover:bg-slate-800 font-medium border border-transparent hover:border-slate-700">
+                        <Key size={18} /> <span>Đổi mật khẩu</span>
+                    </button>
+                    <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm text-red-400 hover:bg-red-500/10 font-medium border border-transparent hover:border-red-500/20">
                         <LogOut size={18} /> <span>Đăng xuất</span>
                     </button>
                 </div>
@@ -487,7 +518,6 @@ export default function ProcurementApp() {
                                 <h2 className="text-2xl font-bold mb-1">Tổng quan</h2>
                                 <p className="text-slate-400 text-sm">Báo cáo tình trạng hợp đồng thời gian thực</p>
                             </div>
-                            {/* Đổi grid layout để vừa 7 thẻ */}
                             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3 md:gap-4">
                                 <div onClick={() => { setFilterStatus('all'); setView('list'); }} className="bg-slate-800 border border-slate-700 rounded-xl p-4 cursor-pointer hover:bg-slate-750 transition-all hover:-translate-y-1 flex items-center justify-between gap-2">
                                     <div>
@@ -497,7 +527,6 @@ export default function ProcurementApp() {
                                     <div className="w-9 h-9 bg-blue-500/20 rounded-lg flex items-center justify-center shrink-0 text-blue-500"><FileDigit size={18} /></div>
                                 </div>
 
-                                {/* THẺ MỚI: TỔNG ĐỢT NHẬP */}
                                 <div onClick={() => { setView('imports_report'); }} className="bg-slate-800 border border-slate-700 rounded-xl p-4 cursor-pointer hover:bg-slate-750 transition-all hover:-translate-y-1 flex items-center justify-between gap-2">
                                     <div>
                                         <p className="text-slate-400 text-xs mb-0.5 line-clamp-1">Tổng đợt nhập</p>
@@ -545,7 +574,7 @@ export default function ProcurementApp() {
                         </div>
                     )}
 
-                    {/* VIEW: MÀN HÌNH MỚI - BÁO CÁO TỔNG ĐỢT NHẬP */}
+                    {/* VIEW: MÀN HÌNH BÁO CÁO TỔNG ĐỢT NHẬP */}
                     {view === 'imports_report' && (
                         <div className="space-y-4 animate-in fade-in slide-in-from-right-8 duration-500 h-full flex flex-col">
                             <div className="flex items-center justify-between shrink-0">
@@ -561,7 +590,6 @@ export default function ProcurementApp() {
                             </div>
 
                             <div className="bg-slate-800 border border-slate-700 rounded-2xl flex flex-col overflow-hidden flex-1">
-                                {/* THANH CÔNG CỤ BỘ LỌC NGÀY THÁNG */}
                                 <div className="p-3 border-b border-slate-700 flex flex-wrap gap-3 shrink-0 items-center justify-between bg-slate-800/80">
                                     <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 min-w-[280px]">
                                         <Calendar className="text-slate-400" size={14}/>
@@ -599,7 +627,6 @@ export default function ProcurementApp() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-700/50">
-                                            {/* DÒNG TỔNG CỘNG CHO ĐỢT NHẬP */}
                                             {filteredImports.length > 0 && (
                                                 <tr className="bg-indigo-600/15 border-b-2 border-indigo-500/30">
                                                     <td className="px-4 py-3 font-bold text-indigo-400 text-center" colSpan="4">
@@ -611,7 +638,6 @@ export default function ProcurementApp() {
                                                 </tr>
                                             )}
 
-                                            {/* DANH SÁCH CHI TIẾT */}
                                             {filteredImports.map((imp, index) => (
                                                 <tr key={index} className="hover:bg-slate-700/30 transition-colors">
                                                     <td className="px-4 py-3 text-slate-500">{index + 1}</td>
@@ -660,7 +686,6 @@ export default function ProcurementApp() {
                             </div>
 
                             <div className="bg-slate-800 border border-slate-700 rounded-2xl flex flex-col overflow-hidden">
-                                {/* THANH CÔNG CỤ TÌM KIẾM & LỌC */}
                                 <div className="p-3 border-b border-slate-700 flex flex-wrap gap-3 shrink-0 items-center justify-between">
                                     <div className="flex gap-3 flex-1 flex-wrap">
                                         <div className="relative flex-1 min-w-[200px] max-w-sm">
@@ -674,7 +699,6 @@ export default function ProcurementApp() {
                                             />
                                         </div>
                                         
-                                        {/* GIAO DIỆN BỘ LỌC NGÀY THÁNG */}
                                         <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 min-w-[280px]">
                                             <Calendar className="text-slate-400" size={14}/>
                                             <span className="text-slate-400 text-xs font-medium">Từ:</span>
@@ -729,11 +753,10 @@ export default function ProcurementApp() {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-700/50">
-                                            {/* DÒNG TỔNG CỘNG */}
                                             {filteredContracts.length > 0 && (
                                                 <tr className="bg-blue-600/15 border-b-2 border-blue-500/30">
                                                     <td className="px-3 py-3 font-bold text-blue-400 text-center" colSpan="3">
-                                                        TỔNG CỘNG KẾT QUẢ TÌM KIẾM ({totals.count} HĐ)
+                                                        TỔNG CỘNG ({totals.count} HĐ)
                                                     </td>
                                                     <td className="px-3 py-3 text-slate-500 text-center">---</td>
                                                     <td className="px-3 py-3 text-slate-500 text-center">---</td>
@@ -750,7 +773,6 @@ export default function ProcurementApp() {
                                                 </tr>
                                             )}
 
-                                            {/* RENDER CÁC DÒNG HỢP ĐỒNG */}
                                             {filteredContracts.map((contract, index) => {
                                                 const totalImport = contract.imports?.reduce((sum, imp) => sum + Number(imp.value), 0) || 0;
                                                 const remaining = Math.max(0, Number(contract.totalValue) - totalImport);
@@ -960,7 +982,7 @@ export default function ProcurementApp() {
                         </div>
                     )}
 
-                    {/* VIEW: QUẢN LÝ TÀI KHOẢN */}
+                    {/* VIEW: QUẢN LÝ TÀI KHOẢN (ĐÃ CÓ THÊM CỘT MẬT KHẨU) */}
                     {view === 'users' && currentUser.role === 'admin' && (
                         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                             <div className="flex items-center justify-between">
@@ -979,6 +1001,8 @@ export default function ProcurementApp() {
                                         <thead className="text-xs text-slate-400 uppercase bg-slate-900/50">
                                             <tr>
                                                 <th className="px-4 py-3 font-medium">Tên đăng nhập</th>
+                                                {/* THÊM CỘT MẬT KHẨU CHO ADMIN XEM */}
+                                                <th className="px-4 py-3 font-medium">Mật khẩu</th>
                                                 <th className="px-4 py-3 font-medium">Họ và tên</th>
                                                 <th className="px-4 py-3 font-medium">Quyền hạn</th>
                                                 <th className="px-4 py-3 font-medium text-right">Thao tác</th>
@@ -988,6 +1012,8 @@ export default function ProcurementApp() {
                                             {users.map((user) => (
                                                 <tr key={user.id} className="hover:bg-slate-700/30 transition-colors">
                                                     <td className="px-4 py-3 font-medium text-slate-200">{user.username}</td>
+                                                    {/* HIỂN THỊ MẬT KHẨU MỘT CÁCH GỌN GÀNG */}
+                                                    <td className="px-4 py-3 text-slate-400 font-mono text-xs">{user.password}</td>
                                                     <td className="px-4 py-3 text-slate-300">{user.fullName}</td>
                                                     <td className="px-4 py-3">
                                                         {user.role === 'admin' ? (
@@ -1004,7 +1030,7 @@ export default function ProcurementApp() {
                                                         <button onClick={() => openUserModal(user)} className="text-slate-400 hover:text-blue-400 p-1.5 transition-colors">
                                                             <Edit size={16} />
                                                         </button>
-                                                        {user.username !== 'admin' && ( // Không cho xóa admin gốc
+                                                        {user.username !== 'admin' && (
                                                             <button onClick={() => deleteUser(user.id)} className="text-slate-400 hover:text-red-400 p-1.5 transition-colors ml-1">
                                                                 <Trash2 size={16} />
                                                             </button>
@@ -1021,7 +1047,43 @@ export default function ProcurementApp() {
                 </div>
             </main>
 
-            {/* CÁC MODALS GIỮ NGUYÊN BÊN DƯỚI */}
+            {/* MODAL MỚI: ĐỔI MẬT KHẨU DÀNH CHO NHÂN VIÊN */}
+            {isChangePwdModalOpen && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+                            <h3 className="text-base font-bold flex items-center gap-2"><Key size={16} className="text-blue-400"/> Đổi mật khẩu</h3>
+                            <button onClick={() => setIsChangePwdModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            {changePwdForm.error && (
+                                <div className="bg-red-500/10 text-red-400 border border-red-500/20 p-2 rounded-lg text-xs text-center">{changePwdForm.error}</div>
+                            )}
+                            {changePwdForm.success && (
+                                <div className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 p-2 rounded-lg text-xs text-center">{changePwdForm.success}</div>
+                            )}
+                            <div>
+                                <label className="block text-xs font-medium mb-1 text-slate-400">Mật khẩu hiện tại</label>
+                                <input type="password" placeholder="••••••••" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500" value={changePwdForm.oldPwd} onChange={e => setChangePwdForm({...changePwdForm, oldPwd: e.target.value})} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium mb-1 text-slate-400">Mật khẩu mới</label>
+                                <input type="password" placeholder="••••••••" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500" value={changePwdForm.newPwd} onChange={e => setChangePwdForm({...changePwdForm, newPwd: e.target.value})} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium mb-1 text-slate-400">Xác nhận mật khẩu mới</label>
+                                <input type="password" placeholder="••••••••" className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500" value={changePwdForm.confirmPwd} onChange={e => setChangePwdForm({...changePwdForm, confirmPwd: e.target.value})} />
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-800 flex justify-end gap-2 bg-slate-800/50">
+                            <button onClick={() => setIsChangePwdModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-700 transition">Hủy</button>
+                            <button onClick={handleSavePassword} className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition">Xác nhận đổi</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* CÁC MODALS CŨ (Hợp đồng, Đợt nhập, Quyết toán, Quản lý User) */}
             {isContractModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
