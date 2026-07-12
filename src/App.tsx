@@ -14,6 +14,22 @@ const getToday = () => {
     return `${d.getFullYear()}-${month}-${day}`;
 };
 
+// HÀM MỚI: Lấy ngày mùng 1 của tháng hiện tại
+const getFirstDayOfMonth = () => {
+    const d = new Date();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${d.getFullYear()}-${month}-01`;
+};
+
+const formatDisplayDate = (dateString) => {
+    if (!dateString) return '---';
+    const d = new Date(dateString);
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = d.getMonth() + 1;
+    const year = d.getFullYear();
+    return `${day} tháng ${month}, ${year}`;
+};
+
 const formatCurrency = (amount) => {
     if (!amount && amount !== 0) return '0 đ';
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
@@ -87,9 +103,9 @@ export default function ProcurementApp() {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
     
-    // THÊM: STATE CHO BỘ LỌC NGÀY THÁNG
-    const [startDate, setStartDate] = useState('');
-    const [endDate, setEndDate] = useState('');
+    // CẬP NHẬT: MẶC ĐỊNH LÀ TỪ MÙNG 1 ĐẦU THÁNG ĐẾN HÔM NAY
+    const [startDate, setStartDate] = useState(getFirstDayOfMonth());
+    const [endDate, setEndDate] = useState(getToday());
 
     // Modals
     const [isContractModalOpen, setIsContractModalOpen] = useState(false);
@@ -143,7 +159,7 @@ export default function ProcurementApp() {
             const status = calculateStatus(c);
             const matchStatus = filterStatus === 'all' || status.id === filterStatus;
             
-            // THÊM: Lọc theo khoảng thời gian (Dựa trên Ngày Ký)
+            // Lọc theo khoảng thời gian (Dựa trên Ngày Ký)
             let matchDate = true;
             if (startDate || endDate) {
                 const contractDate = new Date(c.signedAt);
@@ -165,7 +181,7 @@ export default function ProcurementApp() {
         });
     }, [visibleContracts, searchTerm, filterStatus, startDate, endDate]);
 
-    // THÊM: TÍNH TOÁN DÒNG TỔNG CỘNG ĐỘNG
+    // TÍNH TOÁN DÒNG TỔNG CỘNG ĐỘNG
     const totals = useMemo(() => {
         let count = 0;
         let importCount = 0;
@@ -545,8 +561,8 @@ export default function ProcurementApp() {
                                                 <th className="px-3 py-2.5 font-medium w-10">STT</th>
                                                 <th className="px-3 py-2.5 font-medium w-24">Số HĐ</th>
                                                 <th className="px-3 py-2.5 font-medium pr-4">Tên HĐ & Đối tác</th>
-                                                <th className="px-3 py-2.5 font-medium w-24">Ngày ký</th>
-                                                <th className="px-3 py-2.5 font-medium w-24">Ngày hết hạn</th>
+                                                <th className="px-3 py-2.5 font-medium w-32">Ngày ký</th>
+                                                <th className="px-3 py-2.5 font-medium w-32">Ngày hết hạn</th>
                                                 <th className="px-3 py-2.5 font-medium text-center w-24">Tổng đợt nhập</th>
                                                 <th className="px-3 py-2.5 font-medium w-44">Tiến độ nhập</th>
                                                 <th className="px-3 py-2.5 font-medium w-36">Trạng thái</th>
@@ -591,10 +607,10 @@ export default function ProcurementApp() {
                                                             <div className="text-[11px] text-slate-500 mt-0.5 truncate" title={contract.partner}>{contract.partner}</div>
                                                         </td>
                                                         <td className="px-3 py-2.5 text-slate-300 truncate">
-                                                            {contract.signedAt ? new Date(contract.signedAt).toLocaleDateString('vi-VN') : '---'}
+                                                            {formatDisplayDate(contract.signedAt)}
                                                         </td>
                                                         <td className="px-3 py-2.5 text-slate-300 truncate">
-                                                            {contract.expiresAt ? new Date(contract.expiresAt).toLocaleDateString('vi-VN') : '---'}
+                                                            {formatDisplayDate(contract.expiresAt)}
                                                         </td>
                                                         <td className="px-3 py-2.5 text-center font-medium text-slate-300">
                                                             {contract.imports?.length || 0}
@@ -693,7 +709,7 @@ export default function ProcurementApp() {
                                             <tbody className="divide-y divide-slate-700/50">
                                                 {activeContract.imports?.map((imp, idx) => (
                                                     <tr key={idx}>
-                                                        <td className="py-3 text-slate-300">{new Date(imp.date).toLocaleDateString('vi-VN')}</td>
+                                                        <td className="py-3 text-slate-300">{formatDisplayDate(imp.date)}</td>
                                                         <td className="py-3 font-mono text-slate-400">{imp.invoiceNum}</td>
                                                         <td className="py-3 text-right font-medium text-emerald-400">{formatCurrency(imp.value)}</td>
                                                     </tr>
@@ -720,7 +736,7 @@ export default function ProcurementApp() {
                                             <div className="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4 flex justify-between items-center">
                                                 <div>
                                                     <div className="font-medium text-purple-400 text-sm mb-0.5">Đã giao hồ sơ quyết toán</div>
-                                                    <div className="text-xs text-slate-400">Ngày giao: {new Date(activeContract.settlement.date).toLocaleDateString('vi-VN')}</div>
+                                                    <div className="text-xs text-slate-400">Ngày giao: {formatDisplayDate(activeContract.settlement.date)}</div>
                                                 </div>
                                             </div>
                                         ) : (
@@ -766,11 +782,11 @@ export default function ProcurementApp() {
                                             </div>
                                             <div className="flex justify-between border-b border-slate-700 pb-1.5">
                                                 <span className="text-slate-400">Ngày ký</span>
-                                                <span className="font-medium text-right">{new Date(activeContract.signedAt).toLocaleDateString('vi-VN')}</span>
+                                                <span className="font-medium text-right">{formatDisplayDate(activeContract.signedAt)}</span>
                                             </div>
                                             <div className="flex justify-between border-b border-slate-700 pb-1.5">
                                                 <span className="text-slate-400">Ngày hết hạn</span>
-                                                <span className="font-medium text-right">{new Date(activeContract.expiresAt).toLocaleDateString('vi-VN')}</span>
+                                                <span className="font-medium text-right">{formatDisplayDate(activeContract.expiresAt)}</span>
                                             </div>
                                             {activeContract.notes && (
                                                 <div className="pt-1">
