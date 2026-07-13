@@ -5,7 +5,7 @@ import {
     MoreVertical, Eye, Edit, Trash2, FileDown, UploadCloud, CheckCircle2, 
     AlertCircle, Clock, CheckSquare, ChevronLeft, Calendar, User, FileDigit,
     ArrowDownToLine, ArrowUpRight, LogOut, Users, Shield, Lock, Key, Package,
-    ChevronDown, ChevronRight, Briefcase, CheckCircle // Đã thêm icon Briefcase cho Công việc
+    ChevronDown, ChevronRight, Briefcase, CheckCircle, XCircle, MessageSquare
 } from 'lucide-react';
 
 const getToday = () => {
@@ -84,11 +84,15 @@ const calculateStatus = (contract) => {
     return { id: 'progressing', label: 'Đang thực hiện', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500', icon: <ArrowUpRight size={14} className="mr-1"/> };
 };
 
-// HÀM MỚI: TÍNH TRẠNG THÁI CÔNG VIỆC
+// CẬP NHẬT TRẠNG THÁI CÔNG VIỆC
 const getTaskStatus = (task) => {
     if (task.status === 'completed') {
         return { label: 'Đã hoàn thành', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' };
     }
+    if (task.status === 'waiting') {
+        return { label: 'Chờ sếp duyệt', color: 'text-orange-400 bg-orange-500/10 border-orange-500/30' };
+    }
+
     const today = new Date();
     today.setHours(0,0,0,0);
     const due = new Date(task.dueDate);
@@ -109,8 +113,9 @@ export default function ProcurementApp() {
 
     // App State
     const [contracts, setContracts] = useState([]);
-    const [tasks, setTasks] = useState([]); // THÊM STATE CHO CÔNG VIỆC
-    const [view, setView] = useState('dashboard'); // view có thêm 'tasks'
+    const [tasks, setTasks] = useState([]); 
+    const [notifications, setNotifications] = useState([]); // STATE THÔNG BÁO MỚI
+    const [view, setView] = useState('dashboard');
     const [activeContractId, setActiveContractId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
@@ -122,6 +127,7 @@ export default function ProcurementApp() {
     const [importEndDate, setImportEndDate] = useState('');
 
     const [isMaterialMenuOpen, setIsMaterialMenuOpen] = useState(true);
+    const [isNotifOpen, setIsNotifOpen] = useState(false); // Đóng/mở bảng thông báo
 
     // Modals
     const [isContractModalOpen, setIsContractModalOpen] = useState(false);
@@ -135,9 +141,12 @@ export default function ProcurementApp() {
     const [isChangePwdModalOpen, setIsChangePwdModalOpen] = useState(false);
     const [changePwdForm, setChangePwdForm] = useState({ oldPwd: '', newPwd: '', confirmPwd: '', error: '', success: '' });
     
-    // THÊM: STATE CHO MODAL GIAO VIỆC
     const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
     const [taskForm, setTaskForm] = useState(null);
+
+    // STATE CHO MODAL HOÀN THÀNH CÔNG VIỆC
+    const [isCompleteTaskModalOpen, setIsCompleteTaskModalOpen] = useState(false);
+    const [completeTaskForm, setCompleteTaskForm] = useState({ id: '', note: '' });
 
     // TẢI DỮ LIỆU
     useEffect(() => {
@@ -153,9 +162,11 @@ export default function ProcurementApp() {
             const { data: dbContracts } = await supabase.from('contracts').select('*');
             if (dbContracts) setContracts(dbContracts);
 
-            // TẢI DANH SÁCH CÔNG VIỆC
             const { data: dbTasks } = await supabase.from('tasks').select('*');
             if (dbTasks) setTasks(dbTasks);
+
+            const { data: dbNotifs } = await supabase.from('notifications').select('*');
+            if (dbNotifs) setNotifications(dbNotifs);
         };
         loadInitialData();
     }, []);
@@ -173,20 +184,33 @@ export default function ProcurementApp() {
         return contracts.filter(c => c.createdBy === currentUser.username);
     }, [contracts, currentUser]);
 
-    // BỘ LỌC CÔNG VIỆC (QUYỀN)
+    // BỘ LỌC CÔNG VIỆC
     const visibleTasks = useMemo(() => {
         if (!currentUser) return [];
-        // Admin nhìn thấy tất cả, User chỉ nhìn thấy việc được giao hoặc việc mình tự tạo
         let filtered = tasks;
         if (currentUser.role !== 'admin') {
             filtered = tasks.filter(t => t.assignee === currentUser.username || t.createdBy === currentUser.username);
         }
-        // Sắp xếp: Việc chưa xong lên trước, việc mới tạo lên trước
         return filtered.sort((a, b) => {
-            if (a.status !== b.status) return a.status === 'completed' ? 1 : -1;
+            if (a.status !== b.status) {
+                if (a.status === 'waiting') return -1;
+                if (b.status === 'waiting') return 1;
+                if (a.status === 'completed') return 1;
+                return -1;
+            }
             return new Date(b.dueDate) - new Date(a.dueDate);
         });
     }, [tasks, currentUser]);
+
+    // BỘ LỌC THÔNG BÁO CHO USER HIỆN TẠI
+    const myNotifications = useMemo(() => {
+        if (!currentUser) return [];
+        return notifications
+            .filter(n => n.userId === currentUser.username)
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    }, [notifications, currentUser]);
+
+    const unreadNotifCount = myNotifications.filter(n => !n.isRead).length;
 
     const filteredContracts = useMemo(() => {
         return visibleContracts.filter(c => {
@@ -340,6 +364,24 @@ export default function ProcurementApp() {
         }
     };
 
+    // LOGIC THÔNG BÁO
+    const sendNotification = async (userId, message) => {
+        const newNotif = {
+            id: Date.now().toString(),
+            userId: userId,
+            message: message,
+            isRead: false,
+            createdAt: new Date().toISOString()
+        };
+        await supabase.from('notifications').insert(newNotif);
+        setNotifications(prev => [...prev, newNotif]);
+    };
+
+    const markNotifAsRead = async (notifId) => {
+        await supabase.from('notifications').update({ isRead: true }).eq('id', notifId);
+        setNotifications(notifications.map(n => n.id === notifId ? { ...n, isRead: true } : n));
+    };
+
     // LOGIC CÔNG VIỆC
     const openTaskModal = (task = null) => {
         if (task) {
@@ -348,9 +390,10 @@ export default function ProcurementApp() {
             setTaskForm({
                 id: Date.now().toString(),
                 description: '',
-                assignee: users.length > 0 ? users[0].username : '', // Mặc định người đầu tiên
+                assignee: users.length > 0 ? users[0].username : '', 
                 dueDate: getToday(),
                 status: 'pending',
+                completionNote: '',
                 createdBy: currentUser.username
             });
         }
@@ -362,13 +405,18 @@ export default function ProcurementApp() {
             alert('Vui lòng nhập nội dung công việc!');
             return;
         }
+        const isNew = !tasks.find(t => t.id === taskForm.id);
+        
         const { error } = await supabase.from('tasks').upsert(taskForm);
-        if (error) { alert('Lỗi (Hãy chắc chắn bạn đã tạo bảng tasks trên Supabase): ' + error.message); return; }
+        if (error) { alert('Lỗi (Hãy chắc chắn bạn đã chạy lệnh SQL thêm bảng/cột trên Supabase): ' + error.message); return; }
 
-        if (tasks.find(t => t.id === taskForm.id)) {
-            setTasks(tasks.map(t => t.id === taskForm.id ? taskForm : t));
-        } else {
+        if (isNew) {
             setTasks([...tasks, taskForm]);
+            if (taskForm.assignee !== currentUser.username) {
+                sendNotification(taskForm.assignee, `Bạn được giao công việc mới: "${taskForm.description}"`);
+            }
+        } else {
+            setTasks(tasks.map(t => t.id === taskForm.id ? taskForm : t));
         }
         setIsTaskModalOpen(false);
     };
@@ -378,13 +426,44 @@ export default function ProcurementApp() {
         if (!error) setTasks(tasks.filter(t => t.id !== id));
     };
 
-    const toggleTaskStatus = async (task) => {
-        const newStatus = task.status === 'completed' ? 'pending' : 'completed';
-        const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', task.id);
+    // Nhân viên báo cáo hoàn thành (Gửi đi chờ duyệt)
+    const submitTaskCompletion = async () => {
+        if (!completeTaskForm.note.trim()) {
+            alert('Vui lòng nhập ghi chú hoặc kết quả hoàn thành!');
+            return;
+        }
+
+        const task = tasks.find(t => t.id === completeTaskForm.id);
+        const { error } = await supabase.from('tasks').update({ 
+            status: 'waiting', 
+            completionNote: completeTaskForm.note 
+        }).eq('id', task.id);
+
         if (!error) {
-            setTasks(tasks.map(t => t.id === task.id ? { ...t, status: newStatus } : t));
+            setTasks(tasks.map(t => t.id === task.id ? { ...t, status: 'waiting', completionNote: completeTaskForm.note } : t));
+            sendNotification(task.createdBy, `Nhân viên ${currentUser.fullName} đã báo cáo hoàn thành việc: "${task.description}" - Vui lòng duyệt!`);
+            setIsCompleteTaskModalOpen(false);
         }
     };
+
+    // Người giao việc DUYỆT
+    const approveTask = async (task) => {
+        const { error } = await supabase.from('tasks').update({ status: 'completed' }).eq('id', task.id);
+        if (!error) {
+            setTasks(tasks.map(t => t.id === task.id ? { ...t, status: 'completed' } : t));
+            sendNotification(task.assignee, `Công việc "${task.description}" của bạn ĐÃ ĐƯỢC DUYỆT!`);
+        }
+    };
+
+    // Người giao việc TỪ CHỐI
+    const rejectTask = async (task) => {
+        const { error } = await supabase.from('tasks').update({ status: 'pending', completionNote: '' }).eq('id', task.id);
+        if (!error) {
+            setTasks(tasks.map(t => t.id === task.id ? { ...t, status: 'pending', completionNote: '' } : t));
+            sendNotification(task.assignee, `Sếp đã TỪ CHỐI báo cáo việc "${task.description}". Yêu cầu làm lại!`);
+        }
+    };
+
 
     // LOGIC HỢP ĐỒNG
     const openContractModal = (contract = null) => {
@@ -552,7 +631,6 @@ export default function ProcurementApp() {
                 </div>
                 
                 <nav className="flex-1 p-3 space-y-2 overflow-y-auto">
-                    {/* THẺ CHA: QUẢN LÝ VẬT TƯ */}
                     <div>
                         <button 
                             onClick={() => setIsMaterialMenuOpen(!isMaterialMenuOpen)} 
@@ -565,7 +643,6 @@ export default function ProcurementApp() {
                             {isMaterialMenuOpen ? <ChevronDown size={16} className="text-slate-500"/> : <ChevronRight size={16} className="text-slate-500"/>}
                         </button>
 
-                        {/* THẺ CON */}
                         {isMaterialMenuOpen && (
                             <div className="mt-1 space-y-1 relative">
                                 <div className="absolute left-[21px] top-0 bottom-2 w-px bg-slate-800"></div>
@@ -579,14 +656,13 @@ export default function ProcurementApp() {
                         )}
                     </div>
 
-                    {/* THẺ MỚI NGANG CẤP: CÔNG VIỆC */}
                     <button onClick={() => setView('tasks')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${view === 'tasks' ? 'bg-blue-600/10 text-blue-500 font-medium' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
                         <Briefcase size={18} className={view === 'tasks' ? 'text-blue-500' : 'text-slate-400'} /> 
                         <span>Công việc</span>
-                        {/* Hiện bong báo số lượng việc chưa xong (tùy chọn) */}
-                        {visibleTasks.filter(t => t.status === 'pending').length > 0 && (
+                        {/* Hiện số lượng việc cần làm hoặc chờ duyệt */}
+                        {visibleTasks.filter(t => (t.assignee === currentUser.username && t.status === 'pending') || (t.createdBy === currentUser.username && t.status === 'waiting')).length > 0 && (
                             <span className="ml-auto bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
-                                {visibleTasks.filter(t => t.status === 'pending').length}
+                                {visibleTasks.filter(t => (t.assignee === currentUser.username && t.status === 'pending') || (t.createdBy === currentUser.username && t.status === 'waiting')).length}
                             </span>
                         )}
                     </button>
@@ -619,19 +695,59 @@ export default function ProcurementApp() {
 
             {/* Main Content */}
             <main className="flex-1 flex flex-col overflow-hidden">
-                <header className="h-14 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-6">
+                {/* HEADER CÓ CHUÔNG THÔNG BÁO */}
+                <header className="h-14 border-b border-slate-800 bg-slate-900/50 backdrop-blur-md flex items-center justify-between px-6 z-20">
                     <div className="text-slate-400 text-sm">
                         {new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                     </div>
-                    <div className="flex items-center gap-3 text-slate-400">
-                        <span className="text-sm border border-slate-700 bg-slate-800 px-3 py-1 rounded-full flex items-center gap-1.5">
+                    <div className="flex items-center gap-4">
+                        {/* NÚT CHUÔNG THÔNG BÁO */}
+                        <div className="relative">
+                            <button 
+                                onClick={() => setIsNotifOpen(!isNotifOpen)}
+                                className="relative p-2 text-slate-400 hover:text-slate-200 transition-colors rounded-full hover:bg-slate-800"
+                            >
+                                <Bell size={18} />
+                                {unreadNotifCount > 0 && (
+                                    <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                                )}
+                            </button>
+                            
+                            {/* BẢNG DROPDOWN THÔNG BÁO */}
+                            {isNotifOpen && (
+                                <div className="absolute right-0 mt-2 w-80 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl overflow-hidden z-50">
+                                    <div className="px-4 py-3 border-b border-slate-700 font-bold text-sm bg-slate-900/50">Thông báo của bạn</div>
+                                    <div className="max-h-80 overflow-y-auto">
+                                        {myNotifications.length === 0 ? (
+                                            <div className="p-4 text-center text-xs text-slate-500">Chưa có thông báo nào</div>
+                                        ) : (
+                                            myNotifications.map(n => (
+                                                <div 
+                                                    key={n.id} 
+                                                    onClick={() => !n.isRead && markNotifAsRead(n.id)}
+                                                    className={`px-4 py-3 border-b border-slate-700/50 text-sm cursor-pointer transition-colors ${!n.isRead ? 'bg-blue-900/20 hover:bg-blue-900/30' : 'hover:bg-slate-700/50 opacity-70'}`}
+                                                >
+                                                    <div className="flex justify-between items-start mb-1">
+                                                        <div className={`${!n.isRead ? 'text-blue-400 font-medium' : 'text-slate-300'}`}>{n.message}</div>
+                                                        {!n.isRead && <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1.5 ml-2"></div>}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-500">{new Date(n.createdAt).toLocaleString('vi-VN')}</div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <span className="text-sm border border-slate-700 bg-slate-800 px-3 py-1 rounded-full flex items-center gap-1.5 text-slate-300">
                             {currentUser.role === 'admin' ? <Shield size={14} className="text-purple-400"/> : <User size={14} className="text-blue-400"/>}
                             {currentUser.role === 'admin' ? 'Quản trị viên' : 'Nhân viên'}
                         </span>
                     </div>
                 </header>
 
-                <div className="flex-1 overflow-auto p-4 md:p-6">
+                <div className="flex-1 overflow-auto p-4 md:p-6 z-0">
                     {/* VIEW: DASHBOARD */}
                     {view === 'dashboard' && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -794,7 +910,7 @@ export default function ProcurementApp() {
                         </div>
                     )}
 
-                    {/* VIEW MỚI: QUẢN LÝ CÔNG VIỆC */}
+                    {/* VIEW MỚI: QUẢN LÝ CÔNG VIỆC CÓ QUY TRÌNH DUYỆT */}
                     {view === 'tasks' && (
                         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col">
                             <div className="flex items-center justify-between shrink-0">
@@ -816,8 +932,8 @@ export default function ProcurementApp() {
                                                 <th className="px-4 py-3 font-medium">Nội dung công việc</th>
                                                 <th className="px-4 py-3 font-medium w-40">Người nhận việc</th>
                                                 <th className="px-4 py-3 font-medium w-36">Hạn hoàn thành</th>
-                                                <th className="px-4 py-3 font-medium w-44">Trạng thái</th>
-                                                <th className="px-4 py-3 font-medium text-center w-28">Thao tác</th>
+                                                <th className="px-4 py-3 font-medium w-40">Trạng thái</th>
+                                                <th className="px-4 py-3 font-medium text-center w-36">Thao tác</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-700/50">
@@ -825,7 +941,9 @@ export default function ProcurementApp() {
                                                 const status = getTaskStatus(task);
                                                 const assignedUser = users.find(u => u.username === task.assignee);
                                                 const assigneeName = assignedUser ? assignedUser.fullName : task.assignee;
+                                                
                                                 const isMyTask = task.assignee === currentUser.username;
+                                                const isAssigner = task.createdBy === currentUser.username || currentUser.role === 'admin';
 
                                                 return (
                                                     <tr key={task.id} className={`hover:bg-slate-700/30 transition-colors ${task.status === 'completed' ? 'opacity-60' : ''}`}>
@@ -834,7 +952,15 @@ export default function ProcurementApp() {
                                                             <div className={`font-medium ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-200'}`}>
                                                                 {task.description}
                                                             </div>
-                                                            <div className="text-[10px] text-slate-500 mt-1">Giao bởi: {task.createdBy}</div>
+                                                            <div className="text-[10px] text-slate-500 mt-1 mb-1">Giao bởi: {task.createdBy}</div>
+                                                            
+                                                            {/* HIỂN THỊ GHI CHÚ NẾU CÓ */}
+                                                            {task.completionNote && (
+                                                                <div className="flex gap-2 items-start mt-2 p-2 bg-slate-900/50 rounded-lg border border-slate-700/50">
+                                                                    <MessageSquare size={12} className="text-blue-400 mt-0.5 shrink-0" />
+                                                                    <div className="text-xs text-blue-200/80 italic leading-relaxed">"{task.completionNote}"</div>
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td className="px-4 py-3 text-blue-400 font-medium">{assigneeName}</td>
                                                         <td className="px-4 py-3 text-slate-300 font-mono text-xs">{formatDisplayDate(task.dueDate)}</td>
@@ -844,24 +970,41 @@ export default function ProcurementApp() {
                                                             </span>
                                                         </td>
                                                         <td className="px-4 py-3 text-center">
-                                                            <div className="flex items-center justify-center gap-1">
-                                                                {/* Nút check hoàn thành: Ai tạo hoặc Ai được giao thì được ấn */}
-                                                                {(isMyTask || currentUser.role === 'admin' || task.createdBy === currentUser.username) && (
+                                                            <div className="flex items-center justify-center gap-1.5">
+                                                                
+                                                                {/* TRƯỜNG HỢP 1: ĐANG LÀM -> CHỈ NHÂN VIÊN ĐƯỢC BÁO CÁO XONG */}
+                                                                {task.status === 'pending' && isMyTask && (
                                                                     <button 
-                                                                        onClick={() => toggleTaskStatus(task)} 
-                                                                        className={`p-1.5 rounded-lg transition-colors ${task.status === 'completed' ? 'text-slate-500 hover:text-slate-400' : 'text-emerald-500/70 hover:text-emerald-400 hover:bg-emerald-500/10'}`}
-                                                                        title={task.status === 'completed' ? "Đánh dấu chưa xong" : "Đánh dấu hoàn thành"}
+                                                                        onClick={() => {
+                                                                            setCompleteTaskForm({ id: task.id, note: '' });
+                                                                            setIsCompleteTaskModalOpen(true);
+                                                                        }} 
+                                                                        className="px-2 py-1 text-xs font-medium rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500 hover:text-white transition-colors"
                                                                     >
-                                                                        <CheckCircle size={18} />
+                                                                        Báo cáo xong
                                                                     </button>
                                                                 )}
-                                                                
-                                                                {/* Nút sửa/xóa: Admin hoặc người tạo ra task này được quyền */}
-                                                                {(currentUser.role === 'admin' || task.createdBy === currentUser.username) && (
+
+                                                                {/* TRƯỜNG HỢP 2: ĐANG CHỜ DUYỆT -> CHỈ SẾP MỚI ĐƯỢC DUYỆT/TỪ CHỐI */}
+                                                                {task.status === 'waiting' && isAssigner && (
                                                                     <>
-                                                                        <button onClick={() => openTaskModal(task)} className="p-1.5 text-slate-400 hover:text-blue-400 transition-colors" title="Sửa công việc">
-                                                                            <Edit size={16} />
+                                                                        <button onClick={() => approveTask(task)} className="p-1.5 bg-emerald-500/10 text-emerald-400 rounded-md hover:bg-emerald-500 hover:text-white transition-colors" title="Duyệt hoàn thành">
+                                                                            <CheckCircle size={16} />
                                                                         </button>
+                                                                        <button onClick={() => rejectTask(task)} className="p-1.5 bg-red-500/10 text-red-400 rounded-md hover:bg-red-500 hover:text-white transition-colors" title="Từ chối (Làm lại)">
+                                                                            <XCircle size={16} />
+                                                                        </button>
+                                                                    </>
+                                                                )}
+
+                                                                {/* NÚT SỬA/XÓA CỦA ADMIN/NGƯỜI GIAO (Bị ẩn đi nếu đang chờ duyệt để tránh sửa nhầm) */}
+                                                                {isAssigner && task.status !== 'waiting' && (
+                                                                    <>
+                                                                        {task.status !== 'completed' && (
+                                                                            <button onClick={() => openTaskModal(task)} className="p-1.5 text-slate-400 hover:text-blue-400 transition-colors" title="Sửa công việc">
+                                                                                <Edit size={16} />
+                                                                            </button>
+                                                                        )}
                                                                         <button onClick={() => deleteTask(task.id)} className="p-1.5 text-slate-400 hover:text-red-400 transition-colors" title="Xóa công việc">
                                                                             <Trash2 size={16} />
                                                                         </button>
@@ -876,7 +1019,7 @@ export default function ProcurementApp() {
                                                 <tr>
                                                     <td colSpan="6" className="px-4 py-12 text-center text-slate-500 text-sm">
                                                         <div className="flex justify-center mb-3 text-slate-600"><CheckSquare size={32}/></div>
-                                                        Bạn chưa có công việc nào cần xử lý!
+                                                        Không có công việc nào.
                                                     </td>
                                                 </tr>
                                             )}
@@ -1259,7 +1402,40 @@ export default function ProcurementApp() {
                 </div>
             </main>
 
-            {/* MODAL MỚI: GIAO VIỆC */}
+            {/* MODAL MỚI: BÁO CÁO HOÀN THÀNH CÔNG VIỆC CÓ GHI CHÚ */}
+            {isCompleteTaskModalOpen && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-emerald-900/30 flex justify-between items-center bg-emerald-900/10">
+                            <h3 className="text-base font-bold text-emerald-400 flex items-center gap-2"><CheckCircle size={16}/> Báo cáo hoàn thành</h3>
+                            <button onClick={() => setIsCompleteTaskModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
+                        </div>
+                        <div className="p-4 space-y-4">
+                            <div className="p-3 bg-emerald-500/10 text-emerald-200/80 text-xs rounded-xl border border-emerald-500/20 leading-relaxed">
+                                Công việc sẽ được chuyển sang trạng thái <strong>Chờ duyệt</strong>. Bạn không thể tự sửa lại cho đến khi sếp phản hồi.
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium mb-1.5 text-slate-400">Ghi chú kết quả (Link Google Drive, Zalo...)</label>
+                                <textarea 
+                                    rows="3"
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-emerald-500" 
+                                    value={completeTaskForm.note}
+                                    onChange={e => setCompleteTaskForm({...completeTaskForm, note: e.target.value})}
+                                    placeholder="Đã nhập xong hóa đơn số 123..."
+                                />
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-800 flex justify-end gap-2 bg-slate-800/50">
+                            <button onClick={() => setIsCompleteTaskModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-700 transition">Hủy</button>
+                            <button onClick={submitTaskCompletion} className="px-4 py-2 rounded-xl text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white transition flex items-center gap-2">
+                                Gửi Báo Cáo
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL GIAO VIỆC */}
             {isTaskModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
@@ -1310,7 +1486,7 @@ export default function ProcurementApp() {
                 </div>
             )}
 
-            {/* MODAL: ĐỔI MẬT KHẨU DÀNH CHO NHÂN VIÊN */}
+            {/* MODAL ĐỔI MẬT KHẨU */}
             {isChangePwdModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
