@@ -4,7 +4,8 @@ import {
     Home, FileText, PieChart, Settings, Search, Bell, Menu, X, Plus, 
     MoreVertical, Eye, Edit, Trash2, FileDown, UploadCloud, CheckCircle2, 
     AlertCircle, Clock, CheckSquare, ChevronLeft, Calendar, User, FileDigit,
-    ArrowDownToLine, ArrowUpRight, LogOut, Users, Shield, Lock, Key, Package
+    ArrowDownToLine, ArrowUpRight, LogOut, Users, Shield, Lock, Key, Package,
+    ChevronDown, ChevronRight, Briefcase, CheckCircle // Đã thêm icon Briefcase cho Công việc
 } from 'lucide-react';
 
 const getToday = () => {
@@ -83,6 +84,23 @@ const calculateStatus = (contract) => {
     return { id: 'progressing', label: 'Đang thực hiện', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500', icon: <ArrowUpRight size={14} className="mr-1"/> };
 };
 
+// HÀM MỚI: TÍNH TRẠNG THÁI CÔNG VIỆC
+const getTaskStatus = (task) => {
+    if (task.status === 'completed') {
+        return { label: 'Đã hoàn thành', color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' };
+    }
+    const today = new Date();
+    today.setHours(0,0,0,0);
+    const due = new Date(task.dueDate);
+    due.setHours(0,0,0,0);
+    
+    if (due < today) {
+        const diffDays = Math.floor((today - due) / (1000 * 60 * 60 * 24));
+        return { label: `Quá hạn (${diffDays} ngày)`, color: 'text-red-400 bg-red-500/10 border-red-500/30' };
+    }
+    return { label: 'Đang thực hiện', color: 'text-blue-400 bg-blue-500/10 border-blue-500/30' };
+};
+
 export default function ProcurementApp() {
     // Auth State
     const [users, setUsers] = useState([]);
@@ -91,7 +109,8 @@ export default function ProcurementApp() {
 
     // App State
     const [contracts, setContracts] = useState([]);
-    const [view, setView] = useState('dashboard');
+    const [tasks, setTasks] = useState([]); // THÊM STATE CHO CÔNG VIỆC
+    const [view, setView] = useState('dashboard'); // view có thêm 'tasks'
     const [activeContractId, setActiveContractId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
@@ -102,6 +121,8 @@ export default function ProcurementApp() {
     const [importStartDate, setImportStartDate] = useState('');
     const [importEndDate, setImportEndDate] = useState('');
 
+    const [isMaterialMenuOpen, setIsMaterialMenuOpen] = useState(true);
+
     // Modals
     const [isContractModalOpen, setIsContractModalOpen] = useState(false);
     const [contractForm, setContractForm] = useState(null);
@@ -111,10 +132,12 @@ export default function ProcurementApp() {
     const [settlementForm, setSettlementForm] = useState(null);
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [userForm, setUserForm] = useState(null);
-
-    // THÊM: STATE CHO MODAL ĐỔI MẬT KHẨU
     const [isChangePwdModalOpen, setIsChangePwdModalOpen] = useState(false);
     const [changePwdForm, setChangePwdForm] = useState({ oldPwd: '', newPwd: '', confirmPwd: '', error: '', success: '' });
+    
+    // THÊM: STATE CHO MODAL GIAO VIỆC
+    const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+    const [taskForm, setTaskForm] = useState(null);
 
     // TẢI DỮ LIỆU
     useEffect(() => {
@@ -126,8 +149,13 @@ export default function ProcurementApp() {
                 await supabase.from('users').insert(INITIAL_USERS);
                 setUsers(INITIAL_USERS);
             }
+            
             const { data: dbContracts } = await supabase.from('contracts').select('*');
             if (dbContracts) setContracts(dbContracts);
+
+            // TẢI DANH SÁCH CÔNG VIỆC
+            const { data: dbTasks } = await supabase.from('tasks').select('*');
+            if (dbTasks) setTasks(dbTasks);
         };
         loadInitialData();
     }, []);
@@ -144,6 +172,21 @@ export default function ProcurementApp() {
         if (currentUser.role === 'admin') return contracts;
         return contracts.filter(c => c.createdBy === currentUser.username);
     }, [contracts, currentUser]);
+
+    // BỘ LỌC CÔNG VIỆC (QUYỀN)
+    const visibleTasks = useMemo(() => {
+        if (!currentUser) return [];
+        // Admin nhìn thấy tất cả, User chỉ nhìn thấy việc được giao hoặc việc mình tự tạo
+        let filtered = tasks;
+        if (currentUser.role !== 'admin') {
+            filtered = tasks.filter(t => t.assignee === currentUser.username || t.createdBy === currentUser.username);
+        }
+        // Sắp xếp: Việc chưa xong lên trước, việc mới tạo lên trước
+        return filtered.sort((a, b) => {
+            if (a.status !== b.status) return a.status === 'completed' ? 1 : -1;
+            return new Date(b.dueDate) - new Date(a.dueDate);
+        });
+    }, [tasks, currentUser]);
 
     const filteredContracts = useMemo(() => {
         return visibleContracts.filter(c => {
@@ -267,7 +310,6 @@ export default function ProcurementApp() {
         setView('dashboard');
     };
 
-    // THÊM: HÀM LƯU MẬT KHẨU MỚI
     const handleSavePassword = async () => {
         if (changePwdForm.oldPwd !== currentUser.password) {
             setChangePwdForm(prev => ({...prev, error: 'Mật khẩu hiện tại không đúng!', success: ''}));
@@ -289,7 +331,6 @@ export default function ProcurementApp() {
             setCurrentUser(updatedUser);
             setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
             setChangePwdForm(prev => ({...prev, error: '', success: 'Đổi mật khẩu thành công!'}));
-            // Tự động đóng modal sau 1.5 giây
             setTimeout(() => {
                 setIsChangePwdModalOpen(false);
                 setChangePwdForm({ oldPwd: '', newPwd: '', confirmPwd: '', error: '', success: '' });
@@ -299,6 +340,53 @@ export default function ProcurementApp() {
         }
     };
 
+    // LOGIC CÔNG VIỆC
+    const openTaskModal = (task = null) => {
+        if (task) {
+            setTaskForm(task);
+        } else {
+            setTaskForm({
+                id: Date.now().toString(),
+                description: '',
+                assignee: users.length > 0 ? users[0].username : '', // Mặc định người đầu tiên
+                dueDate: getToday(),
+                status: 'pending',
+                createdBy: currentUser.username
+            });
+        }
+        setIsTaskModalOpen(true);
+    };
+
+    const saveTask = async () => {
+        if (!taskForm.description.trim()) {
+            alert('Vui lòng nhập nội dung công việc!');
+            return;
+        }
+        const { error } = await supabase.from('tasks').upsert(taskForm);
+        if (error) { alert('Lỗi (Hãy chắc chắn bạn đã tạo bảng tasks trên Supabase): ' + error.message); return; }
+
+        if (tasks.find(t => t.id === taskForm.id)) {
+            setTasks(tasks.map(t => t.id === taskForm.id ? taskForm : t));
+        } else {
+            setTasks([...tasks, taskForm]);
+        }
+        setIsTaskModalOpen(false);
+    };
+
+    const deleteTask = async (id) => {
+        const { error } = await supabase.from('tasks').delete().eq('id', id);
+        if (!error) setTasks(tasks.filter(t => t.id !== id));
+    };
+
+    const toggleTaskStatus = async (task) => {
+        const newStatus = task.status === 'completed' ? 'pending' : 'completed';
+        const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', task.id);
+        if (!error) {
+            setTasks(tasks.map(t => t.id === task.id ? { ...t, status: newStatus } : t));
+        }
+    };
+
+    // LOGIC HỢP ĐỒNG
     const openContractModal = (contract = null) => {
         if (contract) {
             setContractForm(contract);
@@ -408,7 +496,7 @@ export default function ProcurementApp() {
                             <Shield size={32} className="text-white" />
                         </div>
                     </div>
-                    <h1 className="text-2xl font-bold text-center mb-2">Hệ thống Mua sắm</h1>
+                    <h1 className="text-2xl font-bold text-center mb-2">Quản Lý Vật Tư</h1>
                     <p className="text-slate-400 text-center text-sm mb-8">Vui lòng đăng nhập để tiếp tục</p>
                     
                     <form onSubmit={handleLogin} className="space-y-4">
@@ -460,30 +548,63 @@ export default function ProcurementApp() {
                     <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
                         <FileText size={18} className="text-white" />
                     </div>
-                    <h1 className="font-bold text-sm leading-tight">Quản lý<br/><span className="text-blue-500">Hợp đồng</span></h1>
+                    <h1 className="font-bold text-sm leading-tight">Quản lý<br/><span className="text-blue-500">Vật tư</span></h1>
                 </div>
-                <nav className="flex-1 p-3 space-y-1.5 overflow-y-auto">
-                    <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${view === 'dashboard' ? 'bg-blue-600/10 text-blue-500 font-medium' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
-                        <PieChart size={18} /> <span>Dashboard</span>
-                    </button>
-                    <button onClick={() => setView('list')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${view === 'list' || view === 'detail' ? 'bg-blue-600/10 text-blue-500 font-medium' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
-                        <FileText size={18} /> <span>Hợp đồng</span>
+                
+                <nav className="flex-1 p-3 space-y-2 overflow-y-auto">
+                    {/* THẺ CHA: QUẢN LÝ VẬT TƯ */}
+                    <div>
+                        <button 
+                            onClick={() => setIsMaterialMenuOpen(!isMaterialMenuOpen)} 
+                            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all text-sm text-slate-200 hover:bg-slate-800 font-medium"
+                        >
+                            <div className="flex items-center gap-3">
+                                <Package size={18} className="text-blue-500" /> 
+                                <span>Quản lý Vật tư</span>
+                            </div>
+                            {isMaterialMenuOpen ? <ChevronDown size={16} className="text-slate-500"/> : <ChevronRight size={16} className="text-slate-500"/>}
+                        </button>
+
+                        {/* THẺ CON */}
+                        {isMaterialMenuOpen && (
+                            <div className="mt-1 space-y-1 relative">
+                                <div className="absolute left-[21px] top-0 bottom-2 w-px bg-slate-800"></div>
+                                <button onClick={() => setView('dashboard')} className={`w-full flex items-center gap-3 pl-11 pr-3 py-2.5 rounded-xl transition-all text-sm ${view === 'dashboard' ? 'bg-blue-600/10 text-blue-500 font-medium' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
+                                    <PieChart size={16} /> <span>Dashboard</span>
+                                </button>
+                                <button onClick={() => setView('list')} className={`w-full flex items-center gap-3 pl-11 pr-3 py-2.5 rounded-xl transition-all text-sm ${view === 'list' || view === 'detail' || view === 'imports_report' ? 'bg-blue-600/10 text-blue-500 font-medium' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
+                                    <FileText size={16} /> <span>Hợp đồng</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* THẺ MỚI NGANG CẤP: CÔNG VIỆC */}
+                    <button onClick={() => setView('tasks')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${view === 'tasks' ? 'bg-blue-600/10 text-blue-500 font-medium' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
+                        <Briefcase size={18} className={view === 'tasks' ? 'text-blue-500' : 'text-slate-400'} /> 
+                        <span>Công việc</span>
+                        {/* Hiện bong báo số lượng việc chưa xong (tùy chọn) */}
+                        {visibleTasks.filter(t => t.status === 'pending').length > 0 && (
+                            <span className="ml-auto bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                                {visibleTasks.filter(t => t.status === 'pending').length}
+                            </span>
+                        )}
                     </button>
                     
                     {currentUser.role === 'admin' && (
-                        <>
-                            <div className="pt-4 pb-2 px-3 text-xs font-semibold text-slate-600 uppercase tracking-wider">Hệ thống</div>
+                        <div className="pt-2">
+                            <div className="pb-1 px-3 text-xs font-semibold text-slate-600 uppercase tracking-wider">Hệ thống</div>
                             <button onClick={() => setView('users')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${view === 'users' ? 'bg-purple-600/10 text-purple-400 font-medium' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
                                 <Users size={18} /> <span>Tài khoản</span>
                             </button>
-                        </>
+                        </div>
                     )}
                 </nav>
+
                 <div className="p-3 border-t border-slate-800 space-y-1.5">
                     <div className="px-3 py-2 text-xs text-slate-400 mb-2 truncate">
                         Đang đăng nhập:<br/><b className="text-slate-200 text-sm">{currentUser.fullName}</b>
                     </div>
-                    {/* THÊM NÚT ĐỔI MẬT KHẨU */}
                     <button onClick={() => {
                         setChangePwdForm({ oldPwd: '', newPwd: '', confirmPwd: '', error: '', success: '' });
                         setIsChangePwdModalOpen(true);
@@ -663,6 +784,99 @@ export default function ProcurementApp() {
                                                 <tr>
                                                     <td colSpan="5" className="px-4 py-10 text-center text-slate-500 text-sm">
                                                         Không tìm thấy đợt nhập nào trong khoảng thời gian này
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* VIEW MỚI: QUẢN LÝ CÔNG VIỆC */}
+                    {view === 'tasks' && (
+                        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500 h-full flex flex-col">
+                            <div className="flex items-center justify-between shrink-0">
+                                <div>
+                                    <h2 className="text-2xl font-bold mb-1">Quản lý Công việc</h2>
+                                    <p className="text-slate-400 text-sm">Giao việc và theo dõi tiến độ công việc của đội ngũ</p>
+                                </div>
+                                <button onClick={() => openTaskModal()} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors shadow-lg shadow-blue-500/20">
+                                    <Plus size={16} /> Giao việc mới
+                                </button>
+                            </div>
+
+                            <div className="bg-slate-800 border border-slate-700 rounded-2xl flex flex-col overflow-hidden flex-1">
+                                <div className="overflow-auto flex-1">
+                                    <table className="w-full text-[13px] text-left">
+                                        <thead className="text-[11px] text-slate-400 uppercase bg-slate-900/80 sticky top-0 backdrop-blur-sm z-10 border-b border-slate-700">
+                                            <tr>
+                                                <th className="px-4 py-3 font-medium w-12">STT</th>
+                                                <th className="px-4 py-3 font-medium">Nội dung công việc</th>
+                                                <th className="px-4 py-3 font-medium w-40">Người nhận việc</th>
+                                                <th className="px-4 py-3 font-medium w-36">Hạn hoàn thành</th>
+                                                <th className="px-4 py-3 font-medium w-44">Trạng thái</th>
+                                                <th className="px-4 py-3 font-medium text-center w-28">Thao tác</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-700/50">
+                                            {visibleTasks.map((task, index) => {
+                                                const status = getTaskStatus(task);
+                                                const assignedUser = users.find(u => u.username === task.assignee);
+                                                const assigneeName = assignedUser ? assignedUser.fullName : task.assignee;
+                                                const isMyTask = task.assignee === currentUser.username;
+
+                                                return (
+                                                    <tr key={task.id} className={`hover:bg-slate-700/30 transition-colors ${task.status === 'completed' ? 'opacity-60' : ''}`}>
+                                                        <td className="px-4 py-3 text-slate-500">{index + 1}</td>
+                                                        <td className="px-4 py-3 pr-8">
+                                                            <div className={`font-medium ${task.status === 'completed' ? 'text-slate-400 line-through' : 'text-slate-200'}`}>
+                                                                {task.description}
+                                                            </div>
+                                                            <div className="text-[10px] text-slate-500 mt-1">Giao bởi: {task.createdBy}</div>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-blue-400 font-medium">{assigneeName}</td>
+                                                        <td className="px-4 py-3 text-slate-300 font-mono text-xs">{formatDisplayDate(task.dueDate)}</td>
+                                                        <td className="px-4 py-3">
+                                                            <span className={`inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium border ${status.color}`}>
+                                                                {status.label}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-center">
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                {/* Nút check hoàn thành: Ai tạo hoặc Ai được giao thì được ấn */}
+                                                                {(isMyTask || currentUser.role === 'admin' || task.createdBy === currentUser.username) && (
+                                                                    <button 
+                                                                        onClick={() => toggleTaskStatus(task)} 
+                                                                        className={`p-1.5 rounded-lg transition-colors ${task.status === 'completed' ? 'text-slate-500 hover:text-slate-400' : 'text-emerald-500/70 hover:text-emerald-400 hover:bg-emerald-500/10'}`}
+                                                                        title={task.status === 'completed' ? "Đánh dấu chưa xong" : "Đánh dấu hoàn thành"}
+                                                                    >
+                                                                        <CheckCircle size={18} />
+                                                                    </button>
+                                                                )}
+                                                                
+                                                                {/* Nút sửa/xóa: Admin hoặc người tạo ra task này được quyền */}
+                                                                {(currentUser.role === 'admin' || task.createdBy === currentUser.username) && (
+                                                                    <>
+                                                                        <button onClick={() => openTaskModal(task)} className="p-1.5 text-slate-400 hover:text-blue-400 transition-colors" title="Sửa công việc">
+                                                                            <Edit size={16} />
+                                                                        </button>
+                                                                        <button onClick={() => deleteTask(task.id)} className="p-1.5 text-slate-400 hover:text-red-400 transition-colors" title="Xóa công việc">
+                                                                            <Trash2 size={16} />
+                                                                        </button>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                            {visibleTasks.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="6" className="px-4 py-12 text-center text-slate-500 text-sm">
+                                                        <div className="flex justify-center mb-3 text-slate-600"><CheckSquare size={32}/></div>
+                                                        Bạn chưa có công việc nào cần xử lý!
                                                     </td>
                                                 </tr>
                                             )}
@@ -982,7 +1196,7 @@ export default function ProcurementApp() {
                         </div>
                     )}
 
-                    {/* VIEW: QUẢN LÝ TÀI KHOẢN (ĐÃ CÓ THÊM CỘT MẬT KHẨU) */}
+                    {/* VIEW: QUẢN LÝ TÀI KHOẢN */}
                     {view === 'users' && currentUser.role === 'admin' && (
                         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
                             <div className="flex items-center justify-between">
@@ -1001,7 +1215,6 @@ export default function ProcurementApp() {
                                         <thead className="text-xs text-slate-400 uppercase bg-slate-900/50">
                                             <tr>
                                                 <th className="px-4 py-3 font-medium">Tên đăng nhập</th>
-                                                {/* THÊM CỘT MẬT KHẨU CHO ADMIN XEM */}
                                                 <th className="px-4 py-3 font-medium">Mật khẩu</th>
                                                 <th className="px-4 py-3 font-medium">Họ và tên</th>
                                                 <th className="px-4 py-3 font-medium">Quyền hạn</th>
@@ -1012,7 +1225,6 @@ export default function ProcurementApp() {
                                             {users.map((user) => (
                                                 <tr key={user.id} className="hover:bg-slate-700/30 transition-colors">
                                                     <td className="px-4 py-3 font-medium text-slate-200">{user.username}</td>
-                                                    {/* HIỂN THỊ MẬT KHẨU MỘT CÁCH GỌN GÀNG */}
                                                     <td className="px-4 py-3 text-slate-400 font-mono text-xs">{user.password}</td>
                                                     <td className="px-4 py-3 text-slate-300">{user.fullName}</td>
                                                     <td className="px-4 py-3">
@@ -1047,7 +1259,58 @@ export default function ProcurementApp() {
                 </div>
             </main>
 
-            {/* MODAL MỚI: ĐỔI MẬT KHẨU DÀNH CHO NHÂN VIÊN */}
+            {/* MODAL MỚI: GIAO VIỆC */}
+            {isTaskModalOpen && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+                            <h3 className="text-base font-bold flex items-center gap-2"><Briefcase size={16} className="text-blue-400"/> {taskForm.id.length > 13 ? 'Giao việc mới' : 'Sửa công việc'}</h3>
+                            <button onClick={() => setIsTaskModalOpen(false)} className="text-slate-400 hover:text-white"><X size={20}/></button>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <div>
+                                <label className="block text-xs font-medium mb-1.5 text-slate-400">Nội dung công việc *</label>
+                                <textarea 
+                                    rows="3"
+                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-blue-500" 
+                                    value={taskForm.description} 
+                                    onChange={e => setTaskForm({...taskForm, description: e.target.value})}
+                                    placeholder="Ví dụ: Nhập liệu chứng từ kho A..."
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-xs font-medium mb-1.5 text-slate-400">Giao cho ai? *</label>
+                                    <select 
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500"
+                                        value={taskForm.assignee}
+                                        onChange={e => setTaskForm({...taskForm, assignee: e.target.value})}
+                                    >
+                                        {users.map(u => (
+                                            <option key={u.username} value={u.username}>{u.fullName} ({u.username})</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium mb-1.5 text-slate-400">Hạn hoàn thành</label>
+                                    <input 
+                                        type="date" 
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-blue-500 [color-scheme:dark]" 
+                                        value={taskForm.dueDate} 
+                                        onChange={e => setTaskForm({...taskForm, dueDate: e.target.value})} 
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-800 flex justify-end gap-2 bg-slate-800/50">
+                            <button onClick={() => setIsTaskModalOpen(false)} className="px-4 py-2 rounded-xl text-sm font-medium text-slate-300 hover:bg-slate-700 transition">Hủy</button>
+                            <button onClick={saveTask} className="px-4 py-2 rounded-xl text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white transition">Lưu Công việc</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL: ĐỔI MẬT KHẨU DÀNH CHO NHÂN VIÊN */}
             {isChangePwdModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
@@ -1083,7 +1346,7 @@ export default function ProcurementApp() {
                 </div>
             )}
 
-            {/* CÁC MODALS CŨ (Hợp đồng, Đợt nhập, Quyết toán, Quản lý User) */}
+            {/* CÁC MODALS KHÁC GIỮ NGUYÊN (Hợp đồng, Đợt nhập, Quyết toán, Quản lý User) */}
             {isContractModalOpen && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
